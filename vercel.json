@@ -1,5 +1,10 @@
 {
   "buildCommand": "npm run build",
+  "functions": {
+    "api/index.ts": {
+      "includeFiles": "dist/**"
+    }
+  },
   "routes": [
     { "handle": "filesystem" },
     { "src": "/admin(?:/.*)?", "dest": "/index.html" },
