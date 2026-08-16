@@ -2,6 +2,7 @@
   "buildCommand": "npm run build",
   "routes": [
     { "handle": "filesystem" },
+    { "src": "/admin(?:/.*)?", "dest": "/index.html" },
     { "src": "/(.*)", "dest": "/api" }
   ]
 }
