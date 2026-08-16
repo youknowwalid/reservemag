@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "tsx server.ts",
     "build": "tsc && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs --define:process.env.NODE_ENV='\"production\"'",
     "preview": "vite preview"
   },
@@ -13,12 +13,12 @@
     "cors": "^2.8.5",
     "express": "^4.21.0",
     "firebase": "^10.0.0",
-    "framer-motion": "^12.0.0",
+    "firebase-admin": "^13.5.0",
     "lucide-react": "^0.400.0",
-    "motion": "^12.0.0",
+    "motion": "12.23.12",
     "papaparse": "^5.4.1",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
     "react-helmet-async": "^2.0.0",
     "react-router-dom": "^6.0.0",
     "xlsx": "^0.18.5"
@@ -30,16 +30,18 @@
     "@types/node": "^20.14.0",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
+    "@vercel/node": "^5.3.21",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
     "esbuild": "^0.23.0",
     "postcss": "^8.4.38",
     "tailwindcss": "^4.0.0",
+    "tsx": "^4.20.3",
     "typescript": "^5.4.5",
     "vite": "^5.3.1"
   },
   "overrides": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
   }
 }
