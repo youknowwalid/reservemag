@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
 import crypto from 'crypto';
+import { createRequire } from 'module';
 import { initializeApp as initializeClientApp } from 'firebase/app';
 import {
   getFirestore as getClientFirestore,
@@ -16,6 +17,7 @@ import {
 import { GoogleGenAI } from '@google/genai';
 
 const isProd = process.env.NODE_ENV === 'production' || process.env.VITE_USER_NODE_ENV === 'production';
+const serverRequire = createRequire(import.meta.url);
 
 let db: any = null;
 let dbInitError: Error | null = null;
@@ -27,7 +29,7 @@ function initializeServerFirestore(): any {
     // Preferred server path: Firebase Admin SDK with service-account credentials.
     // Local development can fall back to the existing Firebase web configuration.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const admin = require('firebase-admin');
+    const admin = serverRequire('firebase-admin');
     const apps = admin.getApps?.() ?? [];
     const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
     const credential = serviceAccountJson
@@ -406,7 +408,8 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => console.log(`[Server] Production-ready on port ${PORT} | ENV: ${isProd ? 'PROD' : 'DEV'}`));
 }
 
-if (typeof require !== 'undefined' && require.main === module) {
+const entryFile = path.basename(process.argv[1] || '');
+if (entryFile === 'server.ts' || entryFile === 'server.cjs') {
   startServer().catch((error) => {
     console.error('[CRITICAL] Startup failed:', error);
     process.exit(1);
