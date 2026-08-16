@@ -121,7 +121,7 @@ function stripExistingMetadata(template: string): string {
   return patterns.reduce((html, pattern) => html.replace(pattern, ''), template);
 }
 
-function renderSocialHtml(template: string, article: any, canonicalUrl: string): string {
+function renderSocialHtml(template: string, article: any | null, canonicalUrl: string): string {
   const title = cleanText(article?.seo?.metaTitle || article?.title || DEFAULT_TITLE, 120);
   const description = cleanText(
     article?.seo?.metaDescription || article?.excerpt || article?.subtitle || DEFAULT_DESCRIPTION,
@@ -133,6 +133,7 @@ function renderSocialHtml(template: string, article: any, canonicalUrl: string):
   const safeCanonical = escapeHtml(canonicalUrl);
   const safeImage = escapeHtml(image);
   const publishedAt = article?.publishDate || article?.date;
+  const pageTitle = article ? `${safeTitle} | THE RESERVE` : safeTitle;
 
   const jsonLd = JSON.stringify({
     '@context': 'https://schema.org',
@@ -150,7 +151,7 @@ function renderSocialHtml(template: string, article: any, canonicalUrl: string):
   const headPayload = `
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${safeTitle} | THE RESERVE</title>
+    <title>${pageTitle}</title>
     <meta name="description" content="${safeDescription}">
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
     <link rel="canonical" href="${safeCanonical}">
@@ -190,35 +191,55 @@ export async function handleSocialCrawler(req: VercelRequest, res: VercelRespons
   const templatePath = path.resolve(process.cwd(), 'dist/index.html');
 
   if (!slug || slug === 'admin' || pathname.startsWith('/api/')) return false;
-  if (!fs.existsSync(templatePath)) {
-    res.status(500).setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.end('SSR template unavailable');
-    return true;
+
+  // Minimal inline fallback so a crawler ALWAYS gets a 200 with usable tags,
+  // even if the built template can't be found on disk (e.g. a Vercel
+  // deployment where dist/ wasn't bundled into the serverless function).
+  const FALLBACK_TEMPLATE = '<!doctype html><html lang="en"><head></head><body><div id="root"></div></body></html>';
+
+  let template: string;
+  try {
+    template = fs.existsSync(templatePath) ? fs.readFileSync(templatePath, 'utf8') : FALLBACK_TEMPLATE;
+  } catch (readError) {
+    console.error('[Social SSR] Failed to read SSR template, using inline fallback:', readError);
+    template = FALLBACK_TEMPLATE;
   }
 
   try {
     const article = await getArticle(slug);
-    if (!article || article.status !== 'published') {
-      res.status(404).setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.setHeader('X-SSR-Status', 'social-not-found');
-      res.end(fs.readFileSync(templatePath, 'utf8'));
-      return true;
-    }
+    const canonicalUrl = toAbsoluteUrl(article ? `/${article.slug || slug}` : `/${slug}`);
+    const isPublished = Boolean(article && article.status === 'published');
+    const html = renderSocialHtml(template, isPublished ? article : null, canonicalUrl);
 
-    const canonicalUrl = toAbsoluteUrl(`/${article.slug || slug}`);
-    const html = renderSocialHtml(fs.readFileSync(templatePath, 'utf8'), article, canonicalUrl);
-
+    // Always 200 for crawlers: an unpublished/missing article still gets a
+    // valid preview (site defaults) rather than an error status, which is
+    // what causes Facebook/Twitter/etc. to refuse to render any preview.
     res.status(200);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('X-SSR-Status', 'social-crawler');
-    res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=300, stale-while-revalidate=600');
+    res.setHeader('X-SSR-Status', isPublished ? 'social-crawler' : 'social-fallback');
+    res.setHeader('Cache-Control', isPublished
+      ? 'public, max-age=300, s-maxage=300, stale-while-revalidate=600'
+      : 'public, max-age=60, s-maxage=60');
     res.setHeader('Vary', 'User-Agent');
     res.end(html);
     return true;
   } catch (error) {
-    console.error('[Social SSR] Fatal crawler render error:', error);
-    res.status(500).setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.end('SSR render failed');
+    console.error('[Social SSR] Crawler render error, serving default tags:', error);
+    try {
+      const canonicalUrl = toAbsoluteUrl(`/${slug}`);
+      const html = renderSocialHtml(template, null, canonicalUrl);
+      res.status(200);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('X-SSR-Status', 'social-error-fallback');
+      res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60');
+      res.setHeader('Vary', 'User-Agent');
+      res.end(html);
+    } catch (fatalError) {
+      // Last resort: still never hand a crawler a 5xx.
+      console.error('[Social SSR] Fatal fallback failure:', fatalError);
+      res.status(200).setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.end(FALLBACK_TEMPLATE.replace('<head>', `<head><title>${DEFAULT_TITLE}</title><meta property="og:title" content="${DEFAULT_TITLE}"><meta property="og:description" content="${DEFAULT_DESCRIPTION}"><meta property="og:image" content="${DEFAULT_IMAGE}">`));
+    }
     return true;
   }
 }
