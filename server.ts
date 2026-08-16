@@ -226,6 +226,20 @@ export async function createApp() {
   app.use(cors());
   app.use(express.json({ limit: '1mb' }));
 
+  let viteInstance: Awaited<ReturnType<typeof import('vite')['createServer']>> | null = null;
+  if (!isProd) {
+    try {
+      const { createServer } = await import('vite');
+      viteInstance = await createServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(viteInstance.middlewares);
+    } catch (error) {
+      console.error('[Server] Failed to initialize Vite middleware:', error);
+    }
+  }
+
   app.get('/api/health', (_req, res) =>
     res.json({
       status: 'ok',
@@ -350,10 +364,7 @@ export async function createApp() {
       }
 
       let template = fs.readFileSync(templatePath, 'utf-8');
-      if (!isProd) {
-        const viteInstance = await import('vite').then(({ createServer }) => createServer({ server: { middlewareMode: true }, appType: 'spa' })).catch(() => null);
-        if (viteInstance) template = await viteInstance.transformIndexHtml(req.originalUrl, template);
-      }
+      if (viteInstance) template = await viteInstance.transformIndexHtml(req.originalUrl, template);
 
       const unknownRoute = Boolean(slug && !isArticle);
       template = renderMetadata(template, {
