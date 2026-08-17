@@ -17,8 +17,8 @@ import {
 import { GoogleGenAI } from '@google/genai';
 
 const isProd = process.env.NODE_ENV === 'production' || process.env.VITE_USER_NODE_ENV === 'production';
-const serverRequire = createRequire(import.meta.url);
-
+const serverRequire: NodeRequire =
+  typeof require === 'function' ? require : createRequire(import.meta.url);
 let db: any = null;
 let dbInitError: Error | null = null;
 
