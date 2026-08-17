@@ -3,68 +3,16 @@ import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
 import crypto from 'crypto';
-import { createRequire } from 'module';
-import { initializeApp as initializeClientApp } from 'firebase/app';
-import {
-  getFirestore as getClientFirestore,
-  collection as clientCollection,
-  query as clientQuery,
-  where as clientWhere,
-  getDocs as clientGetDocs,
-  limit as clientLimit,
-  addDoc as clientAddDoc,
-} from 'firebase/firestore';
 import { GoogleGenAI } from '@google/genai';
+import {
+  getArticleBySlugServer,
+  getPublishedArticleSlugsServer,
+  getServerSupabase,
+  getServerSupabaseInitError,
+  insertArticleServer,
+} from './server-supabase';
 
 const isProd = process.env.NODE_ENV === 'production' || process.env.VITE_USER_NODE_ENV === 'production';
-const serverRequire: NodeRequire =
-  typeof require === 'function' ? require : createRequire(import.meta.url);
-let db: any = null;
-let dbInitError: Error | null = null;
-
-function initializeServerFirestore(): any {
-  if (db) return db;
-
-  try {
-    // Preferred server path: Firebase Admin SDK with service-account credentials.
-    // Local development can fall back to the existing Firebase web configuration.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const admin = serverRequire('firebase-admin');
-    const apps = admin.getApps?.() ?? [];
-    const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-    const credential = serviceAccountJson
-      ? admin.credential.cert(JSON.parse(serviceAccountJson))
-      : admin.credential.applicationDefault();
-    const app =
-      apps.length > 0
-        ? apps[0]
-        : admin.initializeApp({
-            credential,
-            projectId: process.env.FIREBASE_PROJECT_ID,
-          });
-
-    db = process.env.FIRESTORE_DATABASE_ID
-      ? admin.getFirestore(app, process.env.FIRESTORE_DATABASE_ID)
-      : admin.getFirestore(app);
-
-    return db;
-  } catch (adminError) {
-    dbInitError = adminError instanceof Error ? adminError : new Error(String(adminError));
-
-    const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-    if (!fs.existsSync(configPath)) return null;
-
-    try {
-      const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      const app = initializeClientApp(firebaseConfig);
-      db = getClientFirestore(app, firebaseConfig.firestoreDatabaseId);
-      return db;
-    } catch (fallbackError) {
-      dbInitError = fallbackError instanceof Error ? fallbackError : new Error(String(fallbackError));
-      return null;
-    }
-  }
-}
 
 function escapeHtml(value: unknown): string {
   return String(value ?? '')
@@ -168,52 +116,6 @@ function getTemplatePath(): string {
   return isProd ? path.resolve(process.cwd(), 'dist/index.html') : path.resolve(process.cwd(), 'index.html');
 }
 
-function getArticleBySlug(slug: string): Promise<any | null> {
-  const serverDb = initializeServerFirestore();
-  if (!serverDb) return Promise.resolve(null);
-
-  if (typeof serverDb.collection === 'function') {
-    return serverDb
-      .collection('articles')
-      .where('slug', '==', slug)
-      .limit(1)
-      .get()
-      .then((snap: any) => (snap.empty ? null : { id: snap.docs[0].id, ...snap.docs[0].data() }));
-  }
-
-  const q = clientQuery(
-    clientCollection(serverDb, 'articles'),
-    clientWhere('slug', '==', slug),
-    clientLimit(1),
-  );
-  return clientGetDocs(q).then((snap) =>
-    snap.empty ? null : { id: snap.docs[0].id, ...snap.docs[0].data() },
-  );
-}
-
-async function getPublishedArticleSlugs(): Promise<string[]> {
-  const serverDb = initializeServerFirestore();
-  if (!serverDb) return [];
-
-  try {
-    if (typeof serverDb.collection === 'function') {
-      const snap = await serverDb.collection('articles').where('status', '==', 'published').get();
-      return snap.docs
-        .map((doc: any) => doc.data()?.slug)
-        .filter((slug: unknown): slug is string => typeof slug === 'string' && slug.length > 0);
-    }
-
-    const snap = await clientGetDocs(
-      clientQuery(clientCollection(serverDb, 'articles'), clientWhere('status', '==', 'published')),
-    );
-    return snap.docs
-      .map((doc) => doc.data()?.slug)
-      .filter((slug): slug is string => typeof slug === 'string' && slug.length > 0);
-  } catch {
-    return [];
-  }
-}
-
 function createSitemapXml(baseUrl: string, articleSlugs: string[]): string {
   const urls = ['/', '/get-featured', ...articleSlugs.map((slug) => `/${slug}`)];
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
@@ -247,8 +149,8 @@ export async function createApp() {
       status: 'ok',
       env: process.env.NODE_ENV || 'development',
       isProd,
-      firestoreConfigured: Boolean(initializeServerFirestore()),
-      firestoreInitError: dbInitError?.message || null,
+      supabaseConfigured: Boolean(getServerSupabase()),
+      supabaseInitError: getServerSupabaseInitError(),
     }),
   );
 
@@ -292,7 +194,7 @@ export async function createApp() {
       }
 
       const slugClean = `${titleClean.toLowerCase().replace(/[^\w\s-]/g, '').replace(/[\s_-]+/g, '-').replace(/^-+|-+$/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
-      const newArticle = {
+      const newArticleRow = {
         title: titleClean,
         slug: slugClean,
         subtitle: '',
@@ -302,22 +204,16 @@ export async function createApp() {
         featured: false,
         author: 'AI Ingestion Engine',
         image: { url: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?q=80&w=2070&auto=format&fit=crop', credit: 'AI Assistant', source: 'Unsplash' },
-        mobileImage: { url: '', credit: '', source: '' },
-        mobileCropX: 50,
-        readTime: readTimeClean,
+        mobile_image: { url: '', credit: '', source: '' },
+        mobile_crop_x: 50,
+        read_time: readTimeClean,
         date: dateClean,
-        publishDate: new Date().toISOString(),
+        publish_date: new Date().toISOString(),
         content,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
       };
 
-      const serverDb = initializeServerFirestore();
-      if (!serverDb) throw new Error('Firestore database service is not initialized on the server.');
-      const docRef = typeof serverDb.collection === 'function'
-        ? await serverDb.collection('articles').add(newArticle)
-        : await clientAddDoc(clientCollection(serverDb, 'articles'), newArticle);
-      return res.status(200).json({ id: docRef.id, ...newArticle });
+      const inserted = await insertArticleServer(newArticleRow);
+      return res.status(200).json({ id: inserted.id, ...newArticleRow });
     } catch (error: any) {
       console.error('[AI Ingestion] CRITICAL EXCEPTION:', error);
       return res.status(500).json({ error: `Failed to ingest AI narrative: ${error?.message || error}` });
@@ -336,7 +232,7 @@ export async function createApp() {
   });
 
   app.get('/sitemap.xml', async (req, res) => {
-    res.type('application/xml').send(createSitemapXml(getBaseUrl(req), await getPublishedArticleSlugs()));
+    res.type('application/xml').send(createSitemapXml(getBaseUrl(req), await getPublishedArticleSlugsServer()));
   });
 
   app.get('*', async (req: Request, res: Response, next: NextFunction) => {
@@ -357,7 +253,7 @@ export async function createApp() {
       let description = 'An editorial publication exploring Asian luxury, fashion, business, cinema, sports, and culture.';
       let image = '/og-default.jpg';
       let article: any = null;
-      const isArticle = Boolean(slug && (article = await getArticleBySlug(slug)) && article.status === 'published');
+      const isArticle = Boolean(slug && (article = await getArticleBySlugServer(slug)) && article.status === 'published');
 
       if (isArticle) {
         title = article.seo?.metaTitle || article.title || title;

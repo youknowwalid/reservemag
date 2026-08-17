@@ -1,10 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { cert, getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
-import { initializeApp as initializeClientApp } from 'firebase/app';
-import { getFirestore as getClientFirestore, collection, getDocs, limit, query, where } from 'firebase/firestore';
 import fs from 'node:fs';
 import path from 'node:path';
+import { getArticleBySlugServer } from './server-supabase';
 
 const DEFAULT_TITLE = 'THE RESERVE';
 const DEFAULT_DESCRIPTION = 'An editorial publication exploring Asian luxury, fashion, business, cinema, sports, and culture.';
@@ -73,41 +70,7 @@ function getRequestPath(req: VercelRequest): string {
 }
 
 async function getArticle(slug: string): Promise<any | null> {
-  try {
-    const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-    const apps = getApps();
-    const app = apps.length
-      ? apps[0]
-      : initializeApp({
-          credential: serviceAccountJson
-            ? cert(JSON.parse(serviceAccountJson))
-            : undefined,
-          projectId: process.env.FIREBASE_PROJECT_ID,
-        });
-
-    const db = process.env.FIRESTORE_DATABASE_ID
-      ? getAdminFirestore(app, process.env.FIRESTORE_DATABASE_ID)
-      : getAdminFirestore(app);
-
-    const snap = await db.collection('articles').where('slug', '==', slug).limit(1).get();
-    if (!snap.empty) return { id: snap.docs[0].id, ...snap.docs[0].data() };
-  } catch (adminError) {
-    console.error('[Social SSR] Firebase Admin lookup failed:', adminError);
-  }
-
-  // Local/development fallback only. Production should use Firebase Admin credentials.
-  try {
-    const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-    if (!fs.existsSync(configPath)) return null;
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    const app = initializeClientApp(config, 'social-ssr-fallback');
-    const db = getClientFirestore(app, config.firestoreDatabaseId);
-    const snap = await getDocs(query(collection(db, 'articles'), where('slug', '==', slug), limit(1)));
-    return snap.empty ? null : { id: snap.docs[0].id, ...snap.docs[0].data() };
-  } catch (fallbackError) {
-    console.error('[Social SSR] Firestore fallback failed:', fallbackError);
-    return null;
-  }
+  return getArticleBySlugServer(slug);
 }
 
 function stripExistingMetadata(template: string): string {

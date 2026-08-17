@@ -9,10 +9,9 @@
   },
   "dependencies": {
     "@google/genai": "latest",
+    "@supabase/supabase-js": "^2.45.0",
     "cors": "^2.8.5",
     "express": "^4.21.0",
-    "firebase": "^10.0.0",
-    "firebase-admin": "^13.5.0",
     "lucide-react": "^0.400.0",
     "motion": "12.23.12",
     "papaparse": "^5.4.1",

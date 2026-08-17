@@ -1,0 +1,95 @@
+// Shared server-side Supabase helpers for server.ts and social-ssr.ts.
+//
+// Both files are bundled independently by esbuild (see package.json's
+// `build` script), so this module gets inlined into each bundle -- there's
+// no runtime dependency between the two entry points.
+//
+// Unlike the old Firebase Admin setup, no service-role/service-account
+// credential is required here: `articles` has a public "read regardless of
+// status" RLS policy (matching the original Firestore rules' permissive
+// `allow read: if true`), so the anon/publishable key is sufficient for
+// these read-only SSR lookups.
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
+
+let client: SupabaseClient | null = null;
+let initError: Error | null = null;
+
+export function getServerSupabase(): SupabaseClient | null {
+  if (client) return client;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    initError = new Error(
+      'Missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY (or SUPABASE_URL / SUPABASE_ANON_KEY) environment variables.',
+    );
+    return null;
+  }
+  try {
+    client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    return client;
+  } catch (error) {
+    initError = error instanceof Error ? error : new Error(String(error));
+    return null;
+  }
+}
+
+export function getServerSupabaseInitError(): string | null {
+  return initError?.message ?? null;
+}
+
+// Adds camelCase aliases for the handful of snake_case columns the SSR
+// templates read (publishDate, mobileImage, authorId, etc.), leaving the
+// original snake_case keys in place too.
+function rowToArticle(row: any): any {
+  if (!row) return null;
+  return {
+    ...row,
+    publishDate: row.publish_date,
+    mobileImage: row.mobile_image,
+    mobileCropX: row.mobile_crop_x,
+    authorId: row.author_id,
+    readTime: row.read_time,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function getArticleBySlugServer(slug: string): Promise<any | null> {
+  const supabase = getServerSupabase();
+  if (!supabase) return null;
+
+  try {
+    const { data, error } = await supabase.from('articles').select('*').eq('slug', slug).limit(1).maybeSingle();
+    if (error) throw error;
+    return rowToArticle(data);
+  } catch (error) {
+    console.error('[Supabase SSR] getArticleBySlugServer failed:', error);
+    return null;
+  }
+}
+
+export async function getPublishedArticleSlugsServer(): Promise<string[]> {
+  const supabase = getServerSupabase();
+  if (!supabase) return [];
+
+  try {
+    const { data, error } = await supabase.from('articles').select('slug').eq('status', 'published');
+    if (error) throw error;
+    return (data ?? [])
+      .map((row: any) => row.slug)
+      .filter((slug: unknown): slug is string => typeof slug === 'string' && slug.length > 0);
+  } catch (error) {
+    console.error('[Supabase SSR] getPublishedArticleSlugsServer failed:', error);
+    return [];
+  }
+}
+
+export async function insertArticleServer(row: Record<string, any>): Promise<{ id: string }> {
+  const supabase = getServerSupabase();
+  if (!supabase) throw new Error('Supabase is not configured on the server.');
+
+  const { data, error } = await supabase.from('articles').insert(row).select('id').single();
+  if (error) throw error;
+  return data as { id: string };
+}
