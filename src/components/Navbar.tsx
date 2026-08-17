@@ -6,12 +6,17 @@ import { useSupabase } from '../context/SupabaseContext';
 import { categoryService } from '../services/categoryService';
 import SearchOverlay from './SearchOverlay';
 
+// Last-resort fallback if the categories table is ever emptied (e.g. a
+// fresh/un-seeded database) so the menu never silently renders with
+// nothing in it.
+const FALLBACK_CATEGORIES = ['Fashion', 'Business', 'Sports', 'Cinema', 'Culture', 'Luxury'];
+
 export default function Navbar() {
   const { siteSettings } = useSupabase();
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [menuItems, setMenuItems] = useState<string[]>([]);
+  const [menuItems, setMenuItems] = useState<string[]>(FALLBACK_CATEGORIES);
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 50);
@@ -23,7 +28,7 @@ export default function Navbar() {
   // use, instead of a separate hardcoded array that could drift out of sync.
   useEffect(() => {
     const unsubscribe = categoryService.subscribeToCategories((cats) => {
-      setMenuItems(cats.map((c) => c.name));
+      setMenuItems(cats.length > 0 ? cats.map((c) => c.name) : FALLBACK_CATEGORIES);
     });
     return unsubscribe;
   }, []);
@@ -67,12 +72,6 @@ export default function Navbar() {
             >
               {siteSettings?.ctaButton.text || 'Get Featured'}
             </Link>
-            <button 
-              onClick={() => setIsSearchOpen(true)}
-              className="text-reserve-text hover:text-reserve-accent transition-colors p-1.5 sm:p-2"
-            >
-              <Search size={18} className="sm:w-5 sm:h-5" />
-            </button>
             <button 
               onClick={() => setIsMenuOpen(true)}
               className="md:hidden text-reserve-text hover:text-reserve-accent transition-colors p-1.5 sm:p-2"
