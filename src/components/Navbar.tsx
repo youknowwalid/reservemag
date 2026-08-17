@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Menu, X, Search, ChevronRight } from 'lucide-react';
 import { useSupabase } from '../context/SupabaseContext';
+import { categoryService } from '../services/categoryService';
 import SearchOverlay from './SearchOverlay';
 
 export default function Navbar() {
@@ -10,6 +11,7 @@ export default function Navbar() {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [menuItems, setMenuItems] = useState<string[]>([]);
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 50);
@@ -17,10 +19,14 @@ export default function Navbar() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  const menuItems = [
-    'Fashion', 'Business', 'Sports', 'Cinema', 
-    'Culture', 'Luxury', 'Influence', 'Leadership'
-  ];
+  // Pulls from the same DB-backed category list the admin panel and homepage
+  // use, instead of a separate hardcoded array that could drift out of sync.
+  useEffect(() => {
+    const unsubscribe = categoryService.subscribeToCategories((cats) => {
+      setMenuItems(cats.map((c) => c.name));
+    });
+    return unsubscribe;
+  }, []);
 
   return (
     <>

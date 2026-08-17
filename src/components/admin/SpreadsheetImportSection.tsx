@@ -29,25 +29,35 @@ export default function SpreadsheetImportSection() {
 
   const processImport = async () => {
     setImporting(true);
+    let succeeded = 0;
+    let failed = 0;
     for (const row of data) {
       if (!row.title) continue;
-      await articleService.createArticle({
-        title: row.title,
-        slug: articleService.generateSlug(row.title),
-        status: 'draft',
-        content: row.full_story
-          ? [{
-              id: '1',
-              type: 'paragraph',
-              text: row.full_story,
-              style: { bold: false, italic: false, underline: false, fontSize: 'medium', alignment: 'left' },
-            }]
-          : [],
-      } as any);
+      try {
+        await articleService.createArticle({
+          title: row.title,
+          slug: articleService.generateSlug(row.title),
+          status: 'draft',
+          content: row.full_story
+            ? [{
+                id: '1',
+                type: 'paragraph',
+                text: row.full_story,
+                style: { bold: false, italic: false, underline: false, fontSize: 'medium', alignment: 'left' },
+              }]
+            : [],
+        } as any);
+        succeeded++;
+      } catch (error) {
+        console.error(`Failed to import row "${row.title}":`, error);
+        failed++;
+      }
     }
     setImporting(false);
     setData([]);
-    alert('Import complete');
+    alert(failed === 0
+      ? `Import complete: ${succeeded} ${succeeded === 1 ? 'story' : 'stories'} created.`
+      : `Import finished with errors: ${succeeded} created, ${failed} failed. Check the console for details.`);
   };
 
   return (

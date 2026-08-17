@@ -1,7 +1,5 @@
 import React, { useState } from 'react';
 import { Loader2, Sparkles, X, CheckCircle2 } from 'lucide-react';
-import { GoogleGenAI } from "@google/genai";
-import { articleService } from '../../services/articleService';
 
 export default function BulkImportSection() {
   const [aiPrompt, setAiPrompt] = useState('');
@@ -14,56 +12,30 @@ export default function BulkImportSection() {
   const handleAiGeneration = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!aiPrompt.trim()) return;
-    
+
     setGeneratingAi(true);
     setError(null);
     setAiSuccessMessage(null);
 
     try {
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-      if (!apiKey) throw new Error("API Key missing in Vercel settings.");
-
-      const ai = new GoogleGenAI({ apiKey });
-      
-      const prompt = `You are a professional magazine editor. Generate a story about: "${aiPrompt}". 
-      Return ONLY a JSON object: 
-      {
-        "title": "${aiTitle || 'Untitled'}",
-        "excerpt": "A short engaging summary.",
-        "content": [{"id": "1", "type": "paragraph", "text": "...", "style": {"bold": false, "italic": false, "underline": false, "fontSize": "medium", "alignment": "left"}}],
-        "category": "${aiCategory}"
-      }`;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: { responseMimeType: "application/json" }
+      // Generation and the article insert both happen server-side (see
+      // server.ts's /api/ai/ingest) so the Gemini API key never ships to the
+      // browser the way a client-side `new GoogleGenAI(...)` call would.
+      const res = await fetch('/api/ai/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: aiTitle || undefined, category: aiCategory, prompt: aiPrompt }),
       });
 
-      // EXACT FIX: response.text has NO parentheses in the modern SDK!
-      const articleData = JSON.parse(response.text);
+      const result = await res.json();
+      if (!res.ok) throw new Error(result?.error || 'Generation failed.');
 
-      const safeSlug = (articleData.title || 'untitled')
-        .toLowerCase()
-        .replace(/[^\w\s-]/g, '')
-        .replace(/[\s_-]+/g, '-')
-        .replace(/^-+|-+$/g, '') + '-' + Math.floor(1000 + Math.random() * 9000);
-
-      await articleService.createArticle({
-        ...articleData,
-        slug: safeSlug,
-        status: 'draft',
-        featured: false,
-        author: 'AI Editorial',
-        image: { url: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab', credit: 'AI' },
-      });
-
-      setAiSuccessMessage(`Successfully saved: ${articleData.title}`);
+      setAiSuccessMessage(`Successfully saved: ${result.title}`);
       setAiPrompt('');
       setAiTitle('');
     } catch (err: any) {
       console.error("AI Engine Error:", err);
-      setError('Generation failed. Ensure API key is valid.');
+      setError(err?.message || 'Generation failed. Please try again.');
     } finally {
       setGeneratingAi(false);
     }

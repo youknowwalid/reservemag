@@ -14,6 +14,7 @@ export default function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Article[]>([]);
   const [loading, setLoading] = useState(false);
+  const [allArticles, setAllArticles] = useState<Article[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
@@ -22,38 +23,35 @@ export default function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
       setQuery('');
       setResults([]);
       setTimeout(() => inputRef.current?.focus(), 300);
+
+      // Fetch the searchable article list once per overlay open instead of
+      // re-fetching the whole table on every keystroke.
+      setLoading(true);
+      articleService.getAllArticles(false)
+        .then(setAllArticles)
+        .catch((error) => console.error('Search error:', error))
+        .finally(() => setLoading(false));
     }
   }, [isOpen]);
 
   useEffect(() => {
-    const handleSearch = async () => {
-      if (!query.trim()) {
-        setResults([]);
-        return;
-      }
+    if (!query.trim()) {
+      setResults([]);
+      return;
+    }
 
-      setLoading(true);
-      try {
-        // We get all articles and filter on client side for best UX/speed if list isn't massive
-        // Alternatively we can implement a search query in service
-        const allArticles = await articleService.getAllArticles(false);
-        const searchResults = allArticles.filter(article => 
-          article.title.toLowerCase().includes(query.toLowerCase()) ||
-          article.slug.toLowerCase().includes(query.toLowerCase()) ||
-          article.category.toLowerCase().includes(query.toLowerCase()) ||
-          article.author.toLowerCase().includes(query.toLowerCase())
-        );
-        setResults(searchResults.slice(0, 8)); // Limit to 8 for cinematic layout
-      } catch (error) {
-        console.error('Search error:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+    const debounceTimer = setTimeout(() => {
+      const searchResults = allArticles.filter(article =>
+        article.title.toLowerCase().includes(query.toLowerCase()) ||
+        article.slug.toLowerCase().includes(query.toLowerCase()) ||
+        article.category.toLowerCase().includes(query.toLowerCase()) ||
+        article.author.toLowerCase().includes(query.toLowerCase())
+      );
+      setResults(searchResults.slice(0, 8)); // Limit to 8 for cinematic layout
+    }, 300);
 
-    const debounceTimer = setTimeout(handleSearch, 300);
     return () => clearTimeout(debounceTimer);
-  }, [query]);
+  }, [query, allArticles]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -64,7 +62,7 @@ export default function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
   }, [onClose]);
 
   const handleResultClick = (slug: string) => {
-    navigate(`/article/${slug}`);
+    navigate(`/${slug}`);
     onClose();
   };
 

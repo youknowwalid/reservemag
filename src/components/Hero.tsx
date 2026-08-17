@@ -2,13 +2,14 @@ import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { Article } from '../types';
 import ResponsiveImage from './ui/ResponsiveImage';
+import { articleService } from '../services/articleService';
 
 interface HeroProps {
   article: Article;
 }
 
 export default function Hero({ article }: HeroProps) {
-  const slug = article.slug || article.title.toLowerCase().replace(/ /g, '-');
+  const slug = article.slug || articleService.generateSlug(article.title);
   
   return (
     <Link to={`/${slug}`} className="block">

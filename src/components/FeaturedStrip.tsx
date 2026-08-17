@@ -1,6 +1,7 @@
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { Article } from '../types';
+import { articleService } from '../services/articleService';
 
 interface FeaturedStripProps {
   articles: Article[];
@@ -21,7 +22,7 @@ export default function FeaturedStrip({ articles }: FeaturedStripProps) {
 
       <div className="flex gap-8 overflow-x-auto no-scrollbar px-6 md:px-[calc((100vw-1200px)/2)] lg:px-[calc((100vw-1400px)/2)] pb-4">
         {articles.map((article, index) => {
-          const slug = article.slug || article.title.toLowerCase().replace(/ /g, '-');
+          const slug = article.slug || articleService.generateSlug(article.title);
           return (
             <Link key={article.id} to={`/${slug}`}>
               <motion.div

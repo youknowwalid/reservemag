@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Plus, 
-  Trash2, 
-  Edit3, 
-  Check, 
-  X, 
-  Users, 
-  Loader2, 
+import {
+  Plus,
+  Trash2,
+  Edit3,
+  X,
+  Users,
+  Loader2,
   AlertCircle,
   Image as ImageIcon,
   Camera,
@@ -97,21 +96,7 @@ export default function AuthorsSection() {
       await loadAuthors();
     } catch (err: any) {
       console.error('Save Author Error:', err);
-      
-      let message = 'Failed to save author profile.';
-      
-      try {
-        // Try to parse JSON error from logSupabaseError
-        const errInfo = JSON.parse(err.message);
-        if (errInfo.error) {
-          message = `Database Error: ${errInfo.error}`;
-        }
-      } catch (pErr) {
-        // Not a JSON error, use original message
-        message = err.message || message;
-      }
-
-      setError(message);
+      setError(err?.message ? `Database Error: ${err.message}` : 'Failed to save author profile.');
     } finally {
       setLoading(false);
     }
@@ -161,19 +146,7 @@ export default function AuthorsSection() {
       setLoading(false);
     } catch (err: any) {
       console.error('Delete Author Flow Error:', err);
-      
-      let message = `Failed to delete author "${name}".`;
-      
-      try {
-        const errInfo = JSON.parse(err.message);
-        if (errInfo.error) {
-          message = `Database Delete Error: ${errInfo.error}`;
-        }
-      } catch (pErr) {
-        message = err.message || message;
-      }
-      
-      setError(message);
+      setError(err?.message ? `Database Delete Error: ${err.message}` : `Failed to delete author "${name}".`);
       setLoading(false);
     }
   };

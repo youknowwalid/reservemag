@@ -119,6 +119,25 @@ export const articleService = {
     }
   },
 
+  // Cheap counts-only query for dashboards -- avoids pulling every article's
+  // full content payload just to compute a few totals.
+  async getArticleCounts(): Promise<{ total: number; published: number; drafts: number }> {
+    try {
+      const [totalRes, publishedRes, draftRes] = await Promise.all([
+        supabase.from(TABLE).select('id', { count: 'exact', head: true }),
+        supabase.from(TABLE).select('id', { count: 'exact', head: true }).eq('status', 'published'),
+        supabase.from(TABLE).select('id', { count: 'exact', head: true }).eq('status', 'draft'),
+      ]);
+      if (totalRes.error) throw totalRes.error;
+      if (publishedRes.error) throw publishedRes.error;
+      if (draftRes.error) throw draftRes.error;
+      return { total: totalRes.count ?? 0, published: publishedRes.count ?? 0, drafts: draftRes.count ?? 0 };
+    } catch (error) {
+      logSupabaseError(error, OperationType.LIST, TABLE);
+      return { total: 0, published: 0, drafts: 0 };
+    }
+  },
+
   async getFeaturedArticles(): Promise<Article[]> {
     try {
       const { data, error } = await supabase.from(TABLE).select('*').eq('featured', true).limit(10);
@@ -139,6 +158,7 @@ export const articleService = {
       return data.id as string;
     } catch (error) {
       logSupabaseError(error, OperationType.CREATE, TABLE);
+      throw error;
     }
   },
 
@@ -149,6 +169,7 @@ export const articleService = {
       if (error) throw error;
     } catch (error) {
       logSupabaseError(error, OperationType.UPDATE, `${TABLE}/${id}`);
+      throw error;
     }
   },
 
@@ -158,6 +179,7 @@ export const articleService = {
       if (error) throw error;
     } catch (error) {
       logSupabaseError(error, OperationType.DELETE, `${TABLE}/${id}`);
+      throw error;
     }
   },
 

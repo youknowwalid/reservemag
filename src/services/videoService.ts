@@ -58,6 +58,7 @@ export const videoService = {
       return data.id as string;
     } catch (error) {
       logSupabaseError(error, OperationType.CREATE, TABLE);
+      throw error;
     }
   },
 
@@ -72,6 +73,7 @@ export const videoService = {
       if (error) throw error;
     } catch (error) {
       logSupabaseError(error, OperationType.UPDATE, `${TABLE}/${id}`);
+      throw error;
     }
   },
 
@@ -81,6 +83,7 @@ export const videoService = {
       if (error) throw error;
     } catch (error) {
       logSupabaseError(error, OperationType.DELETE, `${TABLE}/${id}`);
+      throw error;
     }
   },
 };

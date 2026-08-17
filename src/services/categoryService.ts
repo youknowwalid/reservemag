@@ -22,19 +22,32 @@ export const categoryService = {
     return (data ?? []).map(rowToCategory);
   },
 
-  // Replaces Firestore's onSnapshot: fetch once immediately, then re-fetch
-  // whenever the table changes.
+  // Replaces Firestore's onSnapshot: fetch once immediately, then patch the
+  // local list in place from each change's payload rather than re-fetching
+  // the whole table on every single insert/update/delete.
   subscribeToCategories(callback: (categories: CategoryDoc[]) => void): () => void {
+    let cached: CategoryDoc[] = [];
+
     this.getAllCategories()
-      .then(callback)
+      .then((categories) => {
+        cached = categories;
+        callback(cached);
+      })
       .catch((err) => console.error('Error loading categories:', err));
 
     const channel = supabase
       .channel('categories_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, () => {
-        this.getAllCategories()
-          .then(callback)
-          .catch((err) => console.error('Error loading categories:', err));
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          cached = [...cached, rowToCategory(payload.new)].sort((a, b) => a.name.localeCompare(b.name));
+        } else if (payload.eventType === 'UPDATE') {
+          cached = cached
+            .map((c) => (c.id === payload.new.id ? rowToCategory(payload.new) : c))
+            .sort((a, b) => a.name.localeCompare(b.name));
+        } else if (payload.eventType === 'DELETE') {
+          cached = cached.filter((c) => c.id !== payload.old.id);
+        }
+        callback(cached);
       })
       .subscribe();
 

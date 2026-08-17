@@ -69,6 +69,7 @@ export const settingsService = {
       if (error) throw error;
     } catch (error) {
       logSupabaseError(error, OperationType.UPDATE, `site_settings/${SETTINGS_ID}`);
+      throw error;
     }
   },
 
@@ -94,6 +95,7 @@ export const settingsService = {
       if (error) throw error;
     } catch (error) {
       logSupabaseError(error, OperationType.UPDATE, `homepage_config/${SETTINGS_ID}`);
+      throw error;
     }
   },
 };

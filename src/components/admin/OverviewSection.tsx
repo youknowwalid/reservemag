@@ -14,7 +14,6 @@ import {
 import { articleService } from '../../services/articleService';
 import { cacheService } from '../../services/cacheService';
 import { cdnService } from '../../services/cdnService';
-import { Article } from '../../types';
 
 export default function OverviewSection() {
   const [stats, setStats] = useState({
@@ -33,12 +32,12 @@ export default function OverviewSection() {
   }, []);
 
   const loadStats = async () => {
-    const articles = await articleService.getAllArticles(true);
+    const counts = await articleService.getArticleCounts();
     setStats({
       ...stats,
-      totalStories: articles.length,
-      publishedStories: articles.filter(a => a.status === 'published').length,
-      drafts: articles.filter(a => a.status === 'draft').length
+      totalStories: counts.total,
+      publishedStories: counts.published,
+      drafts: counts.drafts
     });
   };
 
@@ -64,7 +63,11 @@ export default function OverviewSection() {
   };
 
   const handlePurgeCDN = async () => {
-    if (!confirm('This will refresh cached content across the site. Safe mode (Smart Purge) is enabled. Proceed?')) {
+    // NOTE: cdnService.smartPurge() does not call a real CDN API yet -- it
+    // identifies recently-changed paths and records a purge event to
+    // system_logs for audit purposes. Wire it up to Cloudflare/Fastly/etc.
+    // before relying on this to actually invalidate cached content.
+    if (!confirm('This will log a cache-invalidation event for recently changed pages. No live CDN is wired up yet. Proceed?')) {
       return;
     }
 
@@ -173,17 +176,17 @@ export default function OverviewSection() {
                   {purgeStatus === 'success' ? (
                     <>
                       <CheckCircle2 size={14} className="text-emerald-500" />
-                      CDN Purged
+                      Invalidation Logged
                     </>
                   ) : (
                     <>
                       <Loader2 size={14} className="animate-spin" />
-                      Purging CDN...
+                      Logging Invalidation...
                     </>
                   )}
                 </>
               ) : (
-                'Purge CDN Cache (Smart)'
+                'Log Cache Invalidation'
               )}
             </button>
           </div>

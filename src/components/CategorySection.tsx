@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { Article, Category } from '../types';
 import ResponsiveImage from './ui/ResponsiveImage';
+import { articleService } from '../services/articleService';
 
 export interface CategorySectionProps {
   category: Category;
@@ -13,7 +14,7 @@ const CategorySection: React.FC<CategorySectionProps> = ({ category, articles })
   const mainArticle = articles[0];
   const listArticles = articles.slice(1, 5);
 
-  const mainSlug = mainArticle ? (mainArticle.slug || mainArticle.title.toLowerCase().replace(/ /g, '-')) : '';
+  const mainSlug = mainArticle ? (mainArticle.slug || articleService.generateSlug(mainArticle.title)) : '';
 
   return (
     <section id={category.toLowerCase()} className="py-24 border-t border-reserve-border">
@@ -65,7 +66,7 @@ const CategorySection: React.FC<CategorySectionProps> = ({ category, articles })
           {/* Sidebar List */}
           <div className="lg:col-span-4 space-y-12">
             {listArticles.map((article, idx) => {
-              const slug = article.slug || article.title.toLowerCase().replace(/ /g, '-');
+              const slug = article.slug || articleService.generateSlug(article.title);
               return (
                 <Link key={article.id} to={`/${slug}`} className="block">
                   <motion.div 
