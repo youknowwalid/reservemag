@@ -31,6 +31,27 @@ export const signInWithEmail = async (email: string) => {
   if (error) throw error;
 };
 
+// Username -> internal Supabase Auth email mapping for password-based admin
+// sign-in. Supabase Auth is always email-based under the hood, so a plain
+// "username" is mapped here to a synthetic, never-emailed address that the
+// corresponding auth.users row was created with directly in the database.
+const USERNAME_EMAIL_MAP: Record<string, string> = {
+  walid: 'walid@reservemag.local',
+};
+
+/**
+ * Username + password admin sign-in (in addition to the magic-link flow
+ * above). Looks up the fixed internal email for the given username and
+ * signs in with the password against Supabase Auth directly.
+ */
+export const signInWithUsernamePassword = async (username: string, password: string) => {
+  const email = USERNAME_EMAIL_MAP[username.trim().toLowerCase()];
+  if (!email) throw new Error('Unknown username.');
+
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw new Error('Incorrect username or password.');
+};
+
 export const logout = async () => {
   const { error } = await supabase.auth.signOut();
   if (error) throw error;

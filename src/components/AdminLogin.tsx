@@ -1,15 +1,15 @@
 import React, { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { AlertCircle, ShieldCheck, Mail, CheckCircle2 } from 'lucide-react';
-import { signInWithEmail } from '../lib/supabase';
+import { AlertCircle, ShieldCheck, User, Lock } from 'lucide-react';
+import { signInWithUsernamePassword } from '../lib/supabase';
 import { useSupabase } from '../context/SupabaseContext';
 
 export default function AdminLogin() {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [sent, setSent] = useState(false);
   const { user, isAdmin } = useSupabase();
 
   // If already logged in and admin, redirect to dashboard
@@ -17,16 +17,17 @@ export default function AdminLogin() {
     return <Navigate to="/admin" replace />;
   }
 
-  const handleSendLink = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
     try {
-      await signInWithEmail(email.trim());
-      setSent(true);
+      await signInWithUsernamePassword(username.trim(), password);
+      // useSupabase's auth listener picks up the new session and the
+      // redirect above fires once `isAdmin` resolves.
     } catch (err: any) {
-      setError(err.message || 'Failed to send sign-in link. Please try again.');
+      setError(err.message || 'Sign-in failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -58,59 +59,43 @@ export default function AdminLogin() {
           </motion.div>
         )}
 
-        {user && !isAdmin ? (
-          <div className="text-center space-y-6">
-            <p className="text-xs text-zinc-400 leading-relaxed">
-              Logged in as <span className="text-white font-bold">{user.email}</span>.<br />
-              This account does not have editorial permissions.
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              className="text-[10px] uppercase tracking-widest text-reserve-accent hover:underline"
-            >
-              Try another account
-            </button>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="relative">
+            <User size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" />
+            <input
+              type="text"
+              required
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Username"
+              className="w-full bg-black/40 border border-white/10 pl-11 pr-4 py-4 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-reserve-accent transition-colors"
+            />
           </div>
-        ) : sent ? (
-          <div className="text-center space-y-6">
-            <CheckCircle2 className="text-reserve-accent mx-auto" size={32} />
-            <p className="text-xs text-zinc-400 leading-relaxed">
-              Sign-in link sent to <span className="text-white font-bold">{email}</span>.<br />
-              Check your inbox and follow the link to continue.
-            </p>
-            <button
-              onClick={() => setSent(false)}
-              className="text-[10px] uppercase tracking-widest text-reserve-accent hover:underline"
-            >
-              Use a different email
-            </button>
+          <div className="relative">
+            <Lock size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" />
+            <input
+              type="password"
+              required
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Password"
+              className="w-full bg-black/40 border border-white/10 pl-11 pr-4 py-4 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-reserve-accent transition-colors"
+            />
           </div>
-        ) : (
-          <form onSubmit={handleSendLink} className="space-y-6">
-            <div className="relative">
-              <Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-500" />
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@email.com"
-                className="w-full bg-black/40 border border-white/10 pl-11 pr-4 py-4 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-reserve-accent transition-colors"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-white text-black py-5 uppercase tracking-[0.2em] text-xs font-bold hover:bg-reserve-accent transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 active:scale-[0.98]"
-            >
-              {loading ? (
-                <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
-              ) : (
-                'Send Sign-In Link'
-              )}
-            </button>
-          </form>
-        )}
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-white text-black py-5 uppercase tracking-[0.2em] text-xs font-bold hover:bg-reserve-accent transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 active:scale-[0.98]"
+          >
+            {loading ? (
+              <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+            ) : (
+              'Sign In'
+            )}
+          </button>
+        </form>
 
         <div className="mt-16 pt-8 border-t border-white/5">
           <p className="text-[9px] text-zinc-600 uppercase tracking-[0.4em] leading-loose text-center">
