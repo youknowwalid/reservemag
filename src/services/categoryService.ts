@@ -35,8 +35,13 @@ export const categoryService = {
       })
       .catch((err) => console.error('Error loading categories:', err));
 
+    // Supabase's realtime client caches channels by topic name and reuses
+    // the same channel instance for repeat calls -- calling `.on()` on an
+    // already-subscribed channel throws ("tried to call .on() after
+    // calling .subscribe()"). Now that both Navbar and the homepage
+    // subscribe concurrently, the channel name must be unique per caller.
     const channel = supabase
-      .channel('categories_changes')
+      .channel(`categories_changes_${Math.random().toString(36).slice(2)}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, (payload) => {
         if (payload.eventType === 'INSERT') {
           cached = [...cached, rowToCategory(payload.new)].sort((a, b) => a.name.localeCompare(b.name));
