@@ -51,6 +51,8 @@ export default function SettingsSection() {
     try {
       await settingsService.updateSiteSettings(settings);
       alert('Registry settings updated and synced globally.');
+    } catch (error) {
+      alert('Failed to update registry settings. Please try again.');
     } finally {
       setSaving(false);
     }

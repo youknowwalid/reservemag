@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Loader2, Sparkles, X, CheckCircle2 } from 'lucide-react';
-import { GoogleGenAI } from "@google/genai";
-import { articleService } from '../../services/articleService';
+import { supabase } from '../../lib/supabase';
 
 export default function BulkImportSection() {
   const [aiPrompt, setAiPrompt] = useState('');
@@ -14,56 +13,39 @@ export default function BulkImportSection() {
   const handleAiGeneration = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!aiPrompt.trim()) return;
-    
+
     setGeneratingAi(true);
     setError(null);
     setAiSuccessMessage(null);
 
     try {
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-      if (!apiKey) throw new Error("API Key missing in Vercel settings.");
+      // Generation and the article insert both happen server-side (see
+      // server.ts's /api/ai/ingest, which calls the Tabitoken-backed
+      // aiProvider in src/services/ai/) so the API key never ships to the
+      // browser. The endpoint is admin-only (verifyAdminRequest in
+      // server-supabase.ts), so the caller's Supabase session token has to
+      // ride along -- same pattern as AIConnectionTestPanel.tsx.
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('You must be signed in as an admin to generate a draft.');
 
-      const ai = new GoogleGenAI({ apiKey });
-      
-      const prompt = `You are a professional magazine editor. Generate a story about: "${aiPrompt}". 
-      Return ONLY a JSON object: 
-      {
-        "title": "${aiTitle || 'Untitled'}",
-        "excerpt": "A short engaging summary.",
-        "content": [{"id": "1", "type": "paragraph", "text": "...", "style": {"bold": false, "italic": false, "underline": false, "fontSize": "medium", "alignment": "left"}}],
-        "category": "${aiCategory}"
-      }`;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: { responseMimeType: "application/json" }
+      const res = await fetch('/api/ai/ingest', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ title: aiTitle || undefined, category: aiCategory, prompt: aiPrompt }),
       });
 
-      // EXACT FIX: response.text has NO parentheses in the modern SDK!
-      const articleData = JSON.parse(response.text);
+      const result = await res.json();
+      if (!res.ok) throw new Error(result?.error || 'Generation failed.');
 
-      const safeSlug = (articleData.title || 'untitled')
-        .toLowerCase()
-        .replace(/[^\w\s-]/g, '')
-        .replace(/[\s_-]+/g, '-')
-        .replace(/^-+|-+$/g, '') + '-' + Math.floor(1000 + Math.random() * 9000);
-
-      await articleService.createArticle({
-        ...articleData,
-        slug: safeSlug,
-        status: 'draft',
-        featured: false,
-        author: 'AI Editorial',
-        image: { url: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab', credit: 'AI' },
-      });
-
-      setAiSuccessMessage(`Successfully saved: ${articleData.title}`);
+      setAiSuccessMessage(`Successfully saved: ${result.title}`);
       setAiPrompt('');
       setAiTitle('');
     } catch (err: any) {
       console.error("AI Engine Error:", err);
-      setError('Generation failed. Ensure API key is valid.');
+      setError(err?.message || 'Generation failed. Please try again.');
     } finally {
       setGeneratingAi(false);
     }
@@ -71,7 +53,7 @@ export default function BulkImportSection() {
 
   return (
     <div className="space-y-8 bg-zinc-900/30 p-8 border border-white/5">
-      <h2 className="text-xl font-serif">AI Content Engine (Gemini 3.5)</h2>
+      <h2 className="text-xl font-serif">AI Content Engine</h2>
       <form onSubmit={handleAiGeneration} className="space-y-4">
         <input 
           className="w-full bg-black border border-white/10 p-4 text-sm focus:border-reserve-accent outline-none"

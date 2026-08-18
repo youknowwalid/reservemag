@@ -41,14 +41,16 @@ export const mediaService = {
     const { data } = supabase.storage.from(BUCKET).getPublicUrl(storagePath);
     const downloadURL = data.publicUrl;
 
-    try {
-      await supabase.from(TABLE).insert({
-        url: downloadURL,
-        file_name: file.name,
-        storage_path: storagePath,
-      });
-    } catch (metaError) {
-      console.warn('Failed to save media metadata, but upload succeeded:', metaError);
+    const { error: metaError } = await supabase.from(TABLE).insert({
+      url: downloadURL,
+      file_name: file.name,
+      storage_path: storagePath,
+    });
+    if (metaError) {
+      // The file itself uploaded fine; only the metadata row failed. Log it
+      // (rather than silently returning as if everything succeeded) so an
+      // orphaned storage object doesn't go untracked in the Media Library.
+      logSupabaseError(metaError, OperationType.CREATE, TABLE);
     }
 
     return downloadURL;

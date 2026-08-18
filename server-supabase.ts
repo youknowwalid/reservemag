@@ -10,6 +10,7 @@
 // `allow read: if true`), so the anon/publishable key is sufficient for
 // these read-only SSR lookups.
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { IncomingHttpHeaders } from 'http';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
@@ -92,4 +93,64 @@ export async function insertArticleServer(row: Record<string, any>): Promise<{ i
   const { data, error } = await supabase.from('articles').insert(row).select('id').single();
   if (error) throw error;
   return data as { id: string };
+}
+
+export type AdminAuthResult =
+  | { ok: true; userId: string; client: SupabaseClient }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Verifies that a request carries a valid Supabase session belonging to an
+ * admin, for gating server-side admin-only actions (e.g. the AI connection
+ * test, editorial generation). Reads the caller's access token from
+ * `Authorization: Bearer <jwt>` and evaluates the same `is_admin()`
+ * Postgres function the client uses (see SupabaseContext.tsx) against that
+ * token, so this stays in sync with whatever RLS actually allows -- there
+ * is no separate admin allowlist to drift out of sync.
+ *
+ * On success, the returned `client` is the SAME Supabase client instance
+ * that just proved it belongs to an admin -- callers that need to write to
+ * an `is_admin()`-gated table (e.g. editorial_generations) MUST reuse this
+ * client rather than falling back to `getServerSupabase()`'s bare
+ * anon-key client, which carries no caller JWT and will always see
+ * `auth.uid() = NULL` under RLS. This is the fix for exactly that failure
+ * mode: propagate the already-verified client instead of re-deriving auth
+ * state, or silently dropping it, downstream.
+ *
+ * `deps.createClient` is injectable so tests can verify this function's
+ * logic (token presence, getUser/is_admin sequencing, and -- the crucial
+ * part -- that the exact injected client instance comes back out on
+ * success) without a real Supabase project or network access. Production
+ * callers should omit it.
+ */
+export async function verifyAdminRequest(
+  req: { headers: IncomingHttpHeaders },
+  deps: { createClient?: typeof createClient } = {},
+): Promise<AdminAuthResult> {
+  const createSupabaseClient = deps.createClient ?? createClient;
+
+  const authHeader = req.headers['authorization'];
+  const headerValue = Array.isArray(authHeader) ? authHeader[0] : authHeader;
+  const token = headerValue?.startsWith('Bearer ') ? headerValue.slice('Bearer '.length).trim() : null;
+  if (!token) return { ok: false, status: 401, error: 'Missing admin session token.' };
+
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return { ok: false, status: 500, error: 'Supabase is not configured on the server.' };
+  }
+
+  // A request-scoped client, authenticated as the caller, so `is_admin()`
+  // evaluates against their JWT -- never the anon role. This is the client
+  // that must be reused for any subsequent database mutation this request
+  // performs; see the doc comment above.
+  const scopedClient = createSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+
+  const { data: userData, error: userError } = await scopedClient.auth.getUser(token);
+  if (userError || !userData?.user) return { ok: false, status: 401, error: 'Invalid or expired session.' };
+
+  const { data: isAdminData, error: isAdminError } = await scopedClient.rpc('is_admin');
+  if (isAdminError || isAdminData !== true) return { ok: false, status: 403, error: 'Admin privileges required.' };
+
+  return { ok: true, userId: userData.user.id, client: scopedClient };
 }

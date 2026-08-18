@@ -17,6 +17,8 @@ import GetFeaturedPage from './pages/GetFeaturedPage';
 import { Article, Category, HomepageConfig } from './types';
 import { SupabaseProvider, useSupabase } from './context/SupabaseContext';
 import { articleService } from './services/articleService';
+import { categoryService } from './services/categoryService';
+import { settingsService } from './services/settingsService';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -44,13 +46,23 @@ function Home() {
   const [articles, setArticles] = useState<Article[]>([]);
   const [dbLoading, setDbLoading] = useState(true);
   const [config, setConfig] = useState<HomepageConfig | null>(null);
+  const [categoryNames, setCategoryNames] = useState<Category[]>([]);
+
+  // Categories are managed in the admin panel (categoryService), not
+  // hardcoded here, so the homepage stays in sync with what admins configure.
+  useEffect(() => {
+    const unsubscribe = categoryService.subscribeToCategories((cats) => {
+      setCategoryNames(cats.map((c) => c.name));
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     const fetchArticles = async () => {
       setDbLoading(true);
       try {
-        const homepageConfig = await import('./services/settingsService').then(m => m.settingsService.getHomepageConfig());
-        
+        const homepageConfig = await settingsService.getHomepageConfig();
+
         const idsToFetch: string[] = [];
         if (homepageConfig?.heroArticleId) idsToFetch.push(homepageConfig.heroArticleId);
         if (homepageConfig?.featuredArticleIds?.length) {
@@ -104,12 +116,11 @@ function Home() {
   [publishedArticles, featuredHero, featuredStrip]);
   
   const categorizedArticles = useMemo(() => {
-    const categories: Category[] = ['Fashion', 'Business', 'Sports', 'Cinema', 'Culture', 'Luxury'];
-    return categories.map(cat => ({
+    return categoryNames.map(cat => ({
       name: cat,
       items: publishedArticles.filter(a => a.category === cat).slice(0, 5)
     }));
-  }, [publishedArticles]);
+  }, [publishedArticles, categoryNames]);
 
   if (dbLoading && articles.length === 0) {
     return (

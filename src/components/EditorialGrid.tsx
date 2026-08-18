@@ -2,6 +2,7 @@ import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { Article } from '../types';
 import ResponsiveImage from './ui/ResponsiveImage';
+import { articleService } from '../services/articleService';
 
 interface EditorialGridProps {
   articles: Article[];
@@ -15,7 +16,7 @@ export default function EditorialGrid({ articles }: EditorialGridProps) {
           {articles.map((article, index) => {
             const isLarge = index % 5 === 0;
             const isTall = index % 3 === 0;
-            const slug = article.slug || article.title.toLowerCase().replace(/ /g, '-');
+            const slug = article.slug || articleService.generateSlug(article.title);
 
             return (
               <Link key={article.id} to={`/${slug}`} className={isLarge ? 'lg:col-span-2' : ''}>

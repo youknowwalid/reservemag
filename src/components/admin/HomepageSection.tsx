@@ -37,6 +37,8 @@ export default function HomepageSection() {
     try {
       await settingsService.updateHomepageConfig(config);
       alert('Homepage structure updated successfully');
+    } catch (error) {
+      alert('Failed to update homepage structure. Please try again.');
     } finally {
       setSaving(false);
     }

@@ -22,19 +22,37 @@ export const categoryService = {
     return (data ?? []).map(rowToCategory);
   },
 
-  // Replaces Firestore's onSnapshot: fetch once immediately, then re-fetch
-  // whenever the table changes.
+  // Replaces Firestore's onSnapshot: fetch once immediately, then patch the
+  // local list in place from each change's payload rather than re-fetching
+  // the whole table on every single insert/update/delete.
   subscribeToCategories(callback: (categories: CategoryDoc[]) => void): () => void {
+    let cached: CategoryDoc[] = [];
+
     this.getAllCategories()
-      .then(callback)
+      .then((categories) => {
+        cached = categories;
+        callback(cached);
+      })
       .catch((err) => console.error('Error loading categories:', err));
 
+    // Supabase's realtime client caches channels by topic name and reuses
+    // the same channel instance for repeat calls -- calling `.on()` on an
+    // already-subscribed channel throws ("tried to call .on() after
+    // calling .subscribe()"). Now that both Navbar and the homepage
+    // subscribe concurrently, the channel name must be unique per caller.
     const channel = supabase
-      .channel('categories_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, () => {
-        this.getAllCategories()
-          .then(callback)
-          .catch((err) => console.error('Error loading categories:', err));
+      .channel(`categories_changes_${Math.random().toString(36).slice(2)}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          cached = [...cached, rowToCategory(payload.new)].sort((a, b) => a.name.localeCompare(b.name));
+        } else if (payload.eventType === 'UPDATE') {
+          cached = cached
+            .map((c) => (c.id === payload.new.id ? rowToCategory(payload.new) : c))
+            .sort((a, b) => a.name.localeCompare(b.name));
+        } else if (payload.eventType === 'DELETE') {
+          cached = cached.filter((c) => c.id !== payload.old.id);
+        }
+        callback(cached);
       })
       .subscribe();
 

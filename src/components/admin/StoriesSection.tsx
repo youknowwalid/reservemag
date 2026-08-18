@@ -1,23 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Plus, 
-  Search, 
-  Filter, 
-  MoreVertical, 
-  Eye, 
-  Edit3, 
-  Trash2, 
-  CheckCircle, 
-  Clock, 
+import {
+  Plus,
+  Search,
+  Filter,
+  Edit3,
+  Trash2,
   FileText,
   ChevronLeft,
   ChevronRight,
   ExternalLink,
   ChevronDown,
-  Upload,
-  Image as ImageIcon,
-  Link as LinkIcon
+  Upload
 } from 'lucide-react';
 import { Article, ArticleStatus, Category, Author } from '../../types';
 import { articleService } from '../../services/articleService';
@@ -168,8 +162,12 @@ export default function StoriesSection() {
 
   const handleDelete = async (id: string) => {
     if (confirm('Are you sure you want to delete this story?')) {
-      await articleService.deleteArticle(id);
-      loadArticles();
+      try {
+        await articleService.deleteArticle(id);
+        loadArticles();
+      } catch (error) {
+        alert('Failed to delete story. Please try again.');
+      }
     }
   };
 
@@ -379,7 +377,7 @@ export default function StoriesSection() {
                       <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Define the focal point for portrait viewports</p>
                     </div>
                     <div className="flex items-center gap-4">
-                      <div className="text-[10px] text-zinc-500 uppercase tracking-widest font-mono">X-Offset: {editingArticle.mobileCropX || 50}%</div>
+                      <div className="text-[10px] text-zinc-500 uppercase tracking-widest font-mono">X-Offset: {editingArticle.mobileCropX ?? 50}%</div>
                       <button 
                         onClick={() => setEditingArticle({ ...editingArticle, mobileCropX: 50 })}
                         className="text-[9px] uppercase tracking-widest text-reserve-accent hover:text-white transition-colors"
@@ -404,7 +402,7 @@ export default function StoriesSection() {
                         <img 
                           src={editingArticle.mobileImage?.url || editingArticle.image?.url} 
                           className="w-full h-full object-cover pointer-events-none select-none"
-                          style={{ objectPosition: `${editingArticle.mobileCropX || 50}% 50%` }}
+                          style={{ objectPosition: `${editingArticle.mobileCropX ?? 50}% 50%` }}
                           alt="Crop Preview"
                           referrerPolicy="no-referrer"
                         />
@@ -434,7 +432,7 @@ export default function StoriesSection() {
                             min="0"
                             max="100"
                             step="1"
-                            value={editingArticle.mobileCropX || 50}
+                            value={editingArticle.mobileCropX ?? 50}
                             onChange={(e) => setEditingArticle({ ...editingArticle, mobileCropX: parseInt(e.target.value) })}
                             className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-reserve-accent"
                           />
