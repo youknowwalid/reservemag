@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  LayoutDashboard, FileText, Settings, LogOut, 
+import {
+  LayoutDashboard, FileText, Settings, LogOut,
   ChevronRight, Shield, Layout as HomepageIcon,
-  Circle, Mail, Briefcase, Video, Layers, Users, Database 
+  Circle, Mail, Briefcase, Video, Layers, Users, Database,
+  Newspaper
 } from 'lucide-react';
 import { useSupabase } from '../context/SupabaseContext';
 import { logout } from '../lib/supabase';
@@ -21,6 +22,9 @@ import CategorySection from './admin/CategorySection';
 import AuthorsSection from './admin/AuthorsSection';
 import BulkImportSection from './admin/BulkImportSection';
 import SpreadsheetImportSection from './admin/SpreadsheetImportSection';
+import AIConnectionTestPanel from './admin/AIConnectionTestPanel';
+import SourceRetrievalTestPanel from './admin/SourceRetrievalTestPanel';
+import EditorialGenerationPanel from './admin/EditorialGenerationPanel';
 
 export default function AdminPanel() {
   const { user } = useSupabase();
@@ -35,6 +39,7 @@ export default function AdminPanel() {
   const navItems = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'stories', label: 'Stories', icon: FileText },
+    { id: 'editorial-factory', label: 'Editorial Factory', icon: Newspaper },
     { id: 'bulk-import', label: 'Bulk Import', icon: Database },
     { id: 'categories', label: 'Categories', icon: Layers },
     { id: 'authors', label: 'Authors', icon: Users },
@@ -49,9 +54,16 @@ export default function AdminPanel() {
     switch (activeTab) {
       case 'overview': return <OverviewSection />;
       case 'stories': return <StoriesSection />;
+      case 'editorial-factory': return (
+        <div className="space-y-12">
+          <EditorialGenerationPanel />
+          <SourceRetrievalTestPanel />
+        </div>
+      );
       case 'bulk-import': return (
         <div className="space-y-12">
           <SpreadsheetImportSection />
+          <AIConnectionTestPanel />
           <BulkImportSection />
         </div>
       );

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Loader2, Sparkles, X, CheckCircle2 } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
 
 export default function BulkImportSection() {
   const [aiPrompt, setAiPrompt] = useState('');
@@ -19,11 +20,20 @@ export default function BulkImportSection() {
 
     try {
       // Generation and the article insert both happen server-side (see
-      // server.ts's /api/ai/ingest) so the Gemini API key never ships to the
-      // browser the way a client-side `new GoogleGenAI(...)` call would.
+      // server.ts's /api/ai/ingest, which calls the Tabitoken-backed
+      // aiProvider in src/services/ai/) so the API key never ships to the
+      // browser. The endpoint is admin-only (verifyAdminRequest in
+      // server-supabase.ts), so the caller's Supabase session token has to
+      // ride along -- same pattern as AIConnectionTestPanel.tsx.
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('You must be signed in as an admin to generate a draft.');
+
       const res = await fetch('/api/ai/ingest', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
         body: JSON.stringify({ title: aiTitle || undefined, category: aiCategory, prompt: aiPrompt }),
       });
 
@@ -43,7 +53,7 @@ export default function BulkImportSection() {
 
   return (
     <div className="space-y-8 bg-zinc-900/30 p-8 border border-white/5">
-      <h2 className="text-xl font-serif">AI Content Engine (Gemini 3.5)</h2>
+      <h2 className="text-xl font-serif">AI Content Engine</h2>
       <form onSubmit={handleAiGeneration} className="space-y-4">
         <input 
           className="w-full bg-black border border-white/10 p-4 text-sm focus:border-reserve-accent outline-none"

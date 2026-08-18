@@ -3,14 +3,33 @@ import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
 import crypto from 'crypto';
-import { GoogleGenAI } from '@google/genai';
 import {
   getArticleBySlugServer,
   getPublishedArticleSlugsServer,
   getServerSupabase,
   getServerSupabaseInitError,
   insertArticleServer,
+  verifyAdminRequest,
 } from './server-supabase';
+// Reserve Editorial Engine AI provider. Server-side only -- see
+// src/services/ai/index.ts. Do not call Tabitoken (or any other AI
+// backend) directly from route handlers; always go through this
+// abstraction so the provider can be swapped without touching callers.
+import { generate as aiGenerate, testAIConnection } from './src/services/ai';
+// Source Retrieval Engine. Server-side only -- see
+// src/services/research/sourceRetrievalService.ts. Fetches editor-supplied
+// URLs; nothing else in the app should call fetch() against an arbitrary
+// URL directly -- always go through this module so SSRF protection stays
+// centralized.
+import { retrieveSource } from './src/services/research/sourceRetrievalService';
+// Reserve Editorial Intelligence Engine. Server-side only -- see
+// src/services/editorial/editorialGenerationService.ts. Orchestrates
+// source retrieval + the single AI generation call + validation + QA;
+// nothing else should call the AI provider or build editorial prompts
+// directly.
+import { generateEditorialPackage, resolveGenerationTimeoutMs, getConfiguredEditorialModel } from './src/services/editorial/editorialGenerationService';
+import { validateGenerationRequestBody } from './src/services/editorial/editorialRequestGuard';
+import { computeEditorialFingerprint, createSupabaseEditorialJobLockStore } from './src/services/editorial/editorialJobLock';
 
 const isProd = process.env.NODE_ENV === 'production' || process.env.VITE_USER_NODE_ENV === 'production';
 
@@ -155,27 +174,40 @@ export async function createApp() {
   );
 
   app.post('/api/ai/ingest', async (req, res) => {
+    // Admin-only: same gate as /api/admin/ai-connection-test, reusing the
+    // one verifyAdminRequest() helper (server-supabase.ts) so both routes
+    // stay in sync with whatever `is_admin()` actually allows. This must
+    // run before anything else in the handler -- including request-shape
+    // validation -- so an unauthenticated or non-admin caller learns
+    // nothing about the endpoint's behavior, the AI provider, or its
+    // configuration.
+    const auth = await verifyAdminRequest(req);
+    if (auth.ok === false) return res.status(auth.status).json({ error: auth.error });
+
     const { title, category, prompt } = req.body ?? {};
     if (typeof prompt !== 'string' || !prompt.trim()) {
       return res.status(400).json({ error: 'Prompt is required for draft generation.' });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return res.status(500).json({ error: 'Gemini API key is not configured on the server.' });
-
     try {
-      const ai = new GoogleGenAI({ apiKey });
-      const finalTopicPrompt = `You are an expert editorial writer for The Reserve Magazine, a luxury editorial publication focused on Asian fashion, culture, and high-end lifestyle.\n\nGenerate a highly polished, deep, and beautifully stylized magazine feature article based on this user prompt: "${prompt.trim()}".\n\n${title ? `Target title: "${String(title).trim()}".` : ''}\nCategory: "${category || 'Culture'}".\n\nReturn ONLY a valid JSON object:\n{\n  "title": "Elegant display headline",\n  "excerpt": "One or two sentence hook",\n  "category": "${category || 'Culture'}",\n  "date": "Month day, year",\n  "readTime": "7 min",\n  "articleBlocks": [\n    { "type": "header", "text": "Section Heading" },\n    { "type": "paragraph", "text": "Rich editorial paragraph" },\n    { "type": "quote", "text": "Pull quote" }\n  ]\n}`;
+      const systemPrompt =
+        'You are an expert editorial writer for The Reserve Magazine, a luxury editorial publication focused on Asian fashion, culture, and high-end lifestyle. Respond with ONLY a single valid JSON object matching the requested shape -- no markdown code fences, no commentary before or after it.';
+      const userPrompt = `Generate a highly polished, deep, and beautifully stylized magazine feature article based on this user prompt: "${prompt.trim()}".\n\n${title ? `Target title: "${String(title).trim()}".\n` : ''}Category: "${category || 'Culture'}".\n\nReturn a JSON object with this exact shape:\n{\n  "title": "Elegant display headline",\n  "excerpt": "One or two sentence hook",\n  "category": "${category || 'Culture'}",\n  "date": "Month day, year",\n  "readTime": "7 min",\n  "articleBlocks": [\n    { "type": "header", "text": "Section Heading" },\n    { "type": "paragraph", "text": "Rich editorial paragraph" },\n    { "type": "quote", "text": "Pull quote" }\n  ]\n}`;
 
-      const response = await ai.models.generateContent({
-        model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
-        contents: finalTopicPrompt,
-        config: { responseMimeType: 'application/json' },
+      const result = await aiGenerate({
+        systemPrompt,
+        userPrompt,
+        responseFormat: 'json_object',
+        temperature: 0.8,
+        maxTokens: 4000,
       });
-      const responseText = response.text?.trim();
+
+      const responseText = result.text?.trim();
       if (!responseText) throw new Error('Generative draft output is empty.');
 
-      const parsed = JSON.parse(responseText.replace(/^```json\s*/i, '').replace(/```\s*$/i, ''));
+      const parsed =
+        (result.json as any) ??
+        JSON.parse(responseText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, ''));
       const titleClean = parsed.title || title || 'Untitled AI Narrative';
       const excerptClean = parsed.excerpt || "A compelling and sophisticated narrative curating tomorrow's visions.";
       const categoryClean = parsed.category || category || 'Culture';
@@ -217,6 +249,162 @@ export async function createApp() {
     } catch (error: any) {
       console.error('[AI Ingestion] CRITICAL EXCEPTION:', error);
       return res.status(500).json({ error: `Failed to ingest AI narrative: ${error?.message || error}` });
+    }
+  });
+
+  // Admin-only health check for the AI provider. Runs the same trivial
+  // "RESERVE AI CONNECTED" round trip as `npm run ai:health`, gated behind
+  // a verified admin session so it can't be used to probe the gateway (or
+  // burn quota) anonymously. Never returns the API key -- only a safe
+  // status message, the model name, and latency.
+  app.post('/api/admin/ai-connection-test', async (req, res) => {
+    const auth = await verifyAdminRequest(req);
+    // `auth.ok === false` (rather than `!auth.ok`) so the discriminated
+    // union narrows correctly under this project's non-strict tsconfig.
+    if (auth.ok === false) return res.status(auth.status).json({ error: auth.error });
+
+    const result = await testAIConnection();
+    return res.status(result.ok ? 200 : 502).json(result);
+  });
+
+  // Admin-only debug tool for the Source Retrieval Engine -- fetches one
+  // URL and returns a curated preview (never the full article text or
+  // full image list) so the admin UI can sanity-check extraction without
+  // this becoming a general-purpose URL-fetching proxy. Admin-gated for
+  // the same reason as the AI routes above: unauthenticated callers must
+  // not be able to make this server issue arbitrary outbound requests.
+  app.post('/api/admin/source/fetch', async (req, res) => {
+    const auth = await verifyAdminRequest(req);
+    if (auth.ok === false) return res.status(auth.status).json({ error: auth.error });
+
+    const { url } = req.body ?? {};
+    if (typeof url !== 'string' || !url.trim()) {
+      return res.status(400).json({ error: 'A source URL is required.' });
+    }
+
+    const source = await retrieveSource(url.trim());
+    const heroImage = source.images.find((img) => img.kind === 'hero' || img.kind === 'og')?.imageUrl || source.ogImage || null;
+
+    return res.status(200).json({
+      status: source.status,
+      errorReason: source.errorReason,
+      title: source.title,
+      publisher: source.publisher,
+      publishedAt: source.publishedAt,
+      canonicalUrl: source.canonicalUrl,
+      wordCount: source.wordCount,
+      heroImage,
+      imageCount: source.images.length,
+      articlePreview: source.articleText ? source.articleText.slice(0, 600) : null,
+    });
+  });
+
+  // Reserve Editorial Intelligence Engine -- one editorial item, one AI
+  // request. Admin-gated (same verifyAdminRequest() helper as every other
+  // AI/source route). Costs real money ($0.50/request against Tabitoken),
+  // so beyond the admin UI's own confirmation dialog, this endpoint
+  // refuses to run unless the caller explicitly passes `confirmed: true`
+  // -- defense in depth against a stray or accidental request triggering
+  // a paid generation.
+  app.post('/api/admin/editorial/generate', async (req, res) => {
+    const auth = await verifyAdminRequest(req);
+    if (auth.ok === false) return res.status(auth.status).json({ error: auth.error });
+
+    // editorial_generations is is_admin()-gated under RLS -- the lock
+    // store must write through THIS request's verified, JWT-carrying
+    // client (auth.client), never a bare anon-key client. Built fresh per
+    // request (not a module-level singleton) since each caller's client
+    // carries their own token. See verifyAdminRequest's doc comment.
+    const editorialJobLockStore = createSupabaseEditorialJobLockStore(auth.client);
+
+    // Server-side confirmation gate -- never trust a frontend-only check.
+    // Also validates sourceUrls shape/count (shared with the test suite
+    // via editorialRequestGuard.ts, so this logic can't drift from what's
+    // actually tested).
+    const guard = validateGenerationRequestBody(req.body);
+    // `guard.ok === false` (rather than `!guard.ok`) so the discriminated
+    // union narrows correctly under this project's non-strict tsconfig.
+    if (guard.ok === false) return res.status(guard.status).json({ error: guard.error });
+    const input = guard.input;
+
+    // Duplicate-submission protection: acquire a database-level lock
+    // BEFORE any AI call is made. A second request for the same source
+    // URLs + parameters while this one is PENDING/RUNNING is rejected
+    // outright -- see editorialJobLock.ts for how the lock is enforced
+    // (a Postgres partial unique index, not a check-then-insert race).
+    const fingerprint = computeEditorialFingerprint(input);
+    const staleBeforeIso = new Date(Date.now() - (resolveGenerationTimeoutMs() + 60_000)).toISOString();
+    try {
+      await editorialJobLockStore.reclaimStale(fingerprint, staleBeforeIso);
+    } catch (reclaimError) {
+      console.error('[Editorial Generation] Stale-lock reclaim failed (non-fatal):', reclaimError);
+    }
+
+    let lockId: string;
+    try {
+      const acquired = await editorialJobLockStore.tryAcquire(fingerprint, {
+        source_urls: input.sourceUrls,
+        subject: input.subject ?? null,
+        requested_angle: input.requestedAngle ?? null,
+        content_type: input.contentType ?? null,
+        sources_used: [],
+        provider: 'tabitoken',
+        requested_model: getConfiguredEditorialModel(),
+        ai_request_attempted: false,
+      });
+      if (!acquired.ok) {
+        return res.status(409).json({ error: 'An identical editorial generation is already in progress. Wait for it to finish, or use different source URLs/parameters.' });
+      }
+      lockId = acquired.id;
+    } catch (lockError: any) {
+      console.error('[Editorial Generation] Failed to acquire generation lock:', lockError);
+      return res.status(500).json({ error: 'Failed to start editorial generation.' });
+    }
+
+    try {
+      await editorialJobLockStore.markRunning(lockId);
+    } catch (runningError) {
+      console.error('[Editorial Generation] Failed to mark job RUNNING (continuing anyway):', runningError);
+    }
+
+    try {
+      const result = await generateEditorialPackage(input);
+
+      try {
+        await editorialJobLockStore.markTerminal(lockId, {
+          sources_used: result.sources,
+          editorial_package: result.editorialPackage,
+          served_model: result.servedModel,
+          generation_status: result.status,
+          qa_status: result.qa?.overall ?? null,
+          qa_result: result.qa,
+          confidence: result.editorialPackage?.selfCheck.confidence ?? null,
+          failure_reason: result.failureReason,
+          error_category: result.errorCategory,
+          ai_request_attempted: result.aiRequestAttempted,
+          prompt_tokens: result.usage.promptTokens,
+          completion_tokens: result.usage.completionTokens,
+          total_tokens: result.usage.totalTokens,
+          latency_ms: result.latencyMs,
+        });
+      } catch (dbError) {
+        console.error('[Editorial Generation] Failed to persist final generation state:', dbError);
+      }
+
+      const httpStatus = result.status === 'SUCCESS' ? 200 : 502;
+      return res.status(httpStatus).json({ id: lockId, ...result });
+    } catch (error: any) {
+      console.error('[Editorial Generation] CRITICAL EXCEPTION:', error);
+      try {
+        await editorialJobLockStore.markTerminal(lockId, {
+          generation_status: 'GENERATION_FAILED',
+          error_category: 'PROVIDER_ERROR',
+          failure_reason: 'Editorial generation failed unexpectedly.',
+        });
+      } catch (dbError) {
+        console.error('[Editorial Generation] Failed to persist crash state:', dbError);
+      }
+      return res.status(500).json({ error: 'Editorial generation failed unexpectedly.' });
     }
   });
 
