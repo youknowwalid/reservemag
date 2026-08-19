@@ -29,22 +29,42 @@ const PROGRESS_STEPS = [
   'Complete',
 ];
 
+interface SourceSummary {
+  sourceId: string;
+  url: string;
+  title: string | null;
+  publisher: string | null;
+  status: string;
+  wordCount: number;
+}
+
 interface GenerationResult {
   id: string | null;
   status: 'SUCCESS' | 'SOURCE_RETRIEVAL_FAILED' | 'GENERATION_FAILED' | 'VALIDATION_FAILED';
   failureReason: string | null;
-  sources: Array<{ sourceId: string; url: string; title: string | null; publisher: string | null; status: string; wordCount: number }>;
+  sources: SourceSummary[];
+  // Flat, minimal shape -- matches EditorialPackage in
+  // src/services/editorial/editorialTypes.ts. `sourcesUsed` is an array of
+  // source IDs (e.g. "source_1"), not full objects -- publisher/title/url
+  // are looked up from `sources` above for display, so the same data
+  // isn't duplicated over the wire.
   editorialPackage: {
-    status: 'READY' | 'NEEDS_REVIEW';
-    subject: { name: string; shortBio: string };
-    article: { title: string; subtitle: string; introduction: string; sections: Array<{ heading: string; body: string }>; conclusion: string };
-    instagram: { kicker: string; headline: string; subheadline: string; caption: string; hashtags: string[] };
-    cover: { primaryHeadline: string; secondaryLine: string };
-    image: { recommendedImageUrl: string | null; recommendedImageSource: string | null; imageReason: string };
-    sourcesUsed: Array<{ sourceId: string; publisher: string; title: string; url: string; factsUsed: string[] }>;
-    selfCheck: { confidence: number; unsupportedClaims: string[]; fabricatedQuotes: string[]; warnings: string[] };
+    title: string;
+    subtitle: string;
+    article: string;
+    instagramHeadline: string;
+    instagramSubheadline: string;
+    coverKicker: string;
+    coverSecondaryLine: string;
+    caption: string;
+    imageUrl: string;
+    imageReason: string;
+    sourcesUsed: string[];
+    warnings: string[];
   } | null;
-  qa: { overall: 'PASS' | 'WARNING' | 'FAIL'; checks: Array<{ check: string; severity: string; message: string }> } | null;
+  // status/confidence are computed server-side by editorialQA.ts, not
+  // self-reported by the model -- see that file's header comment.
+  qa: { overall: 'PASS' | 'WARNING' | 'FAIL'; checks: Array<{ check: string; severity: string; message: string }>; confidence: number; status: 'READY' | 'NEEDS_REVIEW' } | null;
   requestedModel: string;
   servedModel: string | null;
   usage: { promptTokens: number | null; completionTokens: number | null; totalTokens: number | null };
@@ -324,7 +344,7 @@ export default function EditorialGenerationPanel() {
           {pkg && (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <Field label="Subject" value={pkg.subject.name} />
+                <Field label="Article Title" value={pkg.title} />
                 <Field
                   label="QA Status"
                   value={
@@ -335,42 +355,55 @@ export default function EditorialGenerationPanel() {
                     )
                   }
                 />
-                <Field label="Article Title" value={pkg.article.title} />
-                <Field label="Subtitle" value={pkg.article.subtitle} />
-                <Field label="Confidence" value={`${pkg.selfCheck.confidence}/100 (${pkg.status})`} />
-                <Field label="Recommended Image" value={pkg.image.recommendedImageUrl ? 'See preview below' : 'None selected'} />
+                <Field label="Subtitle" value={pkg.subtitle} />
+                <Field label="Confidence" value={result.qa ? `${result.qa.confidence}/100 (${result.qa.status})` : null} />
+                <Field label="Recommended Image" value={pkg.imageUrl ? 'See preview below' : 'None selected'} />
               </div>
 
-              <Field label="Article Preview" value={<p className="whitespace-pre-wrap bg-black/40 border border-white/5 p-4">{pkg.article.introduction}</p>} />
+              <Field label="Article" value={<p className="whitespace-pre-wrap bg-black/40 border border-white/5 p-4">{pkg.article}</p>} />
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <Field label="Instagram Headline" value={pkg.instagram.headline} />
-                <Field label="Instagram Subheadline" value={pkg.instagram.subheadline} />
+                <Field label="Instagram Headline" value={pkg.instagramHeadline} />
+                <Field label="Instagram Subheadline" value={pkg.instagramSubheadline} />
               </div>
-              <Field label="Instagram Caption" value={pkg.instagram.caption} />
+              <Field label="Instagram Caption" value={pkg.caption} />
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <Field label="Cover Primary Headline" value={pkg.cover.primaryHeadline} />
-                <Field label="Cover Secondary Line" value={pkg.cover.secondaryLine} />
+                <Field label="Cover Kicker" value={pkg.coverKicker} />
+                <Field label="Cover Secondary Line" value={pkg.coverSecondaryLine} />
               </div>
 
-              {pkg.image.recommendedImageUrl && (
+              {pkg.imageUrl && (
                 <div className="space-y-2">
                   <span className="text-[10px] uppercase tracking-widest text-zinc-500 block">Recommended Image</span>
-                  <img src={pkg.image.recommendedImageUrl} alt="" className="max-w-xs border border-white/10" />
-                  <p className="text-xs text-zinc-500">{pkg.image.imageReason}</p>
+                  <img src={pkg.imageUrl} alt="" className="max-w-xs border border-white/10" />
+                  <p className="text-xs text-zinc-500">{pkg.imageReason}</p>
                 </div>
               )}
 
               <div className="space-y-2">
                 <span className="text-[10px] uppercase tracking-widest text-zinc-500 block">Sources</span>
                 <div className="space-y-2">
-                  {pkg.sourcesUsed.map((s) => (
-                    <div key={s.sourceId} className="text-xs text-zinc-400 bg-black/40 border border-white/5 p-3">
-                      <span className="text-reserve-accent">{s.sourceId}</span> -- {s.title || s.url} ({s.publisher || 'unknown publisher'})
+                  {pkg.sourcesUsed.map((sourceId) => {
+                    const s = result.sources.find((src) => src.sourceId === sourceId);
+                    return (
+                      <div key={sourceId} className="text-xs text-zinc-400 bg-black/40 border border-white/5 p-3">
+                        <span className="text-reserve-accent">{sourceId}</span> -- {s?.title || s?.url || 'unknown source'} ({s?.publisher || 'unknown publisher'})
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {pkg.warnings.length > 0 && (
+                <div className="space-y-2">
+                  <span className="text-[10px] uppercase tracking-widest text-zinc-500 block">Model Warnings</span>
+                  {pkg.warnings.map((w, i) => (
+                    <div key={i} className="text-xs p-3 border border-amber-500/20 bg-amber-500/5 text-amber-400">
+                      {w}
                     </div>
                   ))}
                 </div>
-              </div>
+              )}
 
               {result.qa && result.qa.checks.some((c) => c.severity !== 'PASS') && (
                 <div className="space-y-2">

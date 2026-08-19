@@ -378,7 +378,7 @@ export async function createApp() {
           generation_status: result.status,
           qa_status: result.qa?.overall ?? null,
           qa_result: result.qa,
-          confidence: result.editorialPackage?.selfCheck.confidence ?? null,
+          confidence: result.qa?.confidence ?? null,
           failure_reason: result.failureReason,
           error_category: result.errorCategory,
           ai_request_attempted: result.aiRequestAttempted,

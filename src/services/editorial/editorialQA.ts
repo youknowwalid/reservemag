@@ -5,20 +5,32 @@
 // this stage at all. No AI call is made here or triggered by a low
 // result; a FAIL means the admin reviews it, not that the system
 // regenerates automatically.
+//
+// `confidence` and `status` (READY/NEEDS_REVIEW) are computed here, not
+// requested from the model -- the minimal request schema
+// (editorialPromptBuilder.ts) deliberately doesn't ask for a self-rated
+// confidence score. A rule-based score derived from these objective
+// checks is more trustworthy than a model's self-assessment, and it can
+// never "forget" to apply its own review threshold the way a model
+// occasionally did under the old, larger schema.
 
 import type { EditorialPackage, QaCheckResult, QaReport, QaSeverity } from './editorialTypes';
 
 // Cover copy has no explicit character limit in the task spec (unlike the
-// Instagram fields, which do) -- these are a reasonable inferred ceiling
-// for a magazine cover treatment, checked as a WARNING rather than a hard
-// validation failure.
-const COVER_PRIMARY_HEADLINE_SOFT_MAX = 60;
+// Instagram/cover-kicker fields, which do -- enforced in the validator) --
+// this is a reasonable inferred ceiling for a magazine cover secondary
+// line, checked as a WARNING rather than a hard validation failure.
 const COVER_SECONDARY_LINE_SOFT_MAX = 100;
 
-const ARTICLE_WORD_COUNT_TARGET_MIN = 800;
-const ARTICLE_WORD_COUNT_TARGET_MAX = 1200;
-const ARTICLE_WORD_COUNT_SHORT_WARNING = 400; // below this and outside the target range, flag as unusually short
+const ARTICLE_WORD_COUNT_TARGET_MIN = 600;
+const ARTICLE_WORD_COUNT_TARGET_MAX = 900;
+const ARTICLE_WORD_COUNT_SHORT_WARNING = 300; // below this and outside the target range, flag as unusually short
 const ARTICLE_WORD_COUNT_FAIL_FLOOR = 100; // below this, treat as essentially empty
+
+// Confidence starts at 100 and is docked per check outcome, floored at 0.
+const CONFIDENCE_PENALTY_WARNING = 10;
+const CONFIDENCE_PENALTY_FAIL = 25;
+const NEEDS_REVIEW_CONFIDENCE_THRESHOLD = 70;
 
 function countWords(text: string): number {
   const t = text.trim();
@@ -43,16 +55,15 @@ export function runEditorialQA(
 
   // 1. Required fields -- the package already passed structural
   // validation to get here, so this check confirms the highest-value
-  // fields aren't merely present-but-degenerate (e.g. a title equal to
-  // the empty string would already have failed validation; this catches
-  // softer emptiness like a whitespace-only field that a naive check
-  // could miss).
+  // fields aren't merely present-but-degenerate (e.g. whitespace-only)
+  // in a way a naive presence check could miss.
   const requiredNonEmpty: Array<[string, string]> = [
-    ['article.title', pkg.article.title],
-    ['article.introduction', pkg.article.introduction],
-    ['article.conclusion', pkg.article.conclusion],
-    ['instagram.headline', pkg.instagram.headline],
-    ['cover.primaryHeadline', pkg.cover.primaryHeadline],
+    ['title', pkg.title],
+    ['article', pkg.article],
+    ['instagramHeadline', pkg.instagramHeadline],
+    ['coverKicker', pkg.coverKicker],
+    ['coverSecondaryLine', pkg.coverSecondaryLine],
+    ['caption', pkg.caption],
   ];
   const emptyRequiredFields = requiredNonEmpty.filter(([, value]) => !value || !value.trim());
   if (emptyRequiredFields.length > 0) {
@@ -62,20 +73,19 @@ export function runEditorialQA(
   }
 
   // 2. Article length
-  const sectionWords = pkg.article.sections.reduce((sum, s) => sum + countWords(s.body), 0);
-  const totalWords = countWords(pkg.article.introduction) + sectionWords + countWords(pkg.article.conclusion);
+  const totalWords = countWords(pkg.article);
   if (totalWords < ARTICLE_WORD_COUNT_FAIL_FLOOR) {
     push('article_length', 'FAIL', `Article is only ${totalWords} words -- effectively empty.`);
   } else if (totalWords < ARTICLE_WORD_COUNT_SHORT_WARNING) {
-    push('article_length', 'WARNING', `Article is ${totalWords} words, well under the ${ARTICLE_WORD_COUNT_TARGET_MIN}-${ARTICLE_WORD_COUNT_TARGET_MAX} target (acceptable if the sources genuinely didn't support more).`);
+    push('article_length', 'WARNING', `Article is ${totalWords} words, well under the ${ARTICLE_WORD_COUNT_TARGET_MIN}-${ARTICLE_WORD_COUNT_TARGET_MAX} target (acceptable if the source genuinely didn't support more).`);
   } else if (totalWords > ARTICLE_WORD_COUNT_TARGET_MAX * 1.3) {
     push('article_length', 'WARNING', `Article is ${totalWords} words, notably over the ${ARTICLE_WORD_COUNT_TARGET_MAX}-word target.`);
   } else {
     push('article_length', 'PASS', `Article is ${totalWords} words.`);
   }
 
-  // 3. Duplicate paragraphs (intro / sections / conclusion, near-identical after normalization)
-  const paragraphs = [pkg.article.introduction, ...pkg.article.sections.map((s) => s.body), pkg.article.conclusion];
+  // 3. Duplicate paragraphs within the article (split on blank lines).
+  const paragraphs = pkg.article.split(/\n{2,}/);
   const seen = new Set<string>();
   let duplicatesFound = 0;
   for (const p of paragraphs) {
@@ -86,82 +96,61 @@ export function runEditorialQA(
   }
   push('duplicate_paragraphs', duplicatesFound > 0 ? 'WARNING' : 'PASS', duplicatesFound > 0 ? `${duplicatesFound} near-duplicate paragraph(s) found.` : 'No duplicate paragraphs found.');
 
-  // 4. Cover text length (soft limits -- see constants above)
-  const coverIssues: string[] = [];
-  if (pkg.cover.primaryHeadline.length > COVER_PRIMARY_HEADLINE_SOFT_MAX) coverIssues.push(`primaryHeadline is ${pkg.cover.primaryHeadline.length} chars`);
-  if (pkg.cover.secondaryLine.length > COVER_SECONDARY_LINE_SOFT_MAX) coverIssues.push(`secondaryLine is ${pkg.cover.secondaryLine.length} chars`);
-  push('cover_text_length', coverIssues.length > 0 ? 'WARNING' : 'PASS', coverIssues.length > 0 ? `Longer than the recommended cover length: ${coverIssues.join(', ')}.` : 'Cover copy length is reasonable.');
+  // 4. Cover secondary line length (soft limit -- see constant above; coverKicker's hard limit is already enforced in the validator).
+  push(
+    'cover_text_length',
+    pkg.coverSecondaryLine.length > COVER_SECONDARY_LINE_SOFT_MAX ? 'WARNING' : 'PASS',
+    pkg.coverSecondaryLine.length > COVER_SECONDARY_LINE_SOFT_MAX
+      ? `coverSecondaryLine is ${pkg.coverSecondaryLine.length} characters, longer than the recommended length.`
+      : 'Cover copy length is reasonable.',
+  );
 
   // 5. Headline length (hard limit from the task spec -- already enforced
   // in the validator, but surfaced here too so a QA report alone tells
   // the full story without cross-referencing validation output).
-  push('headline_length', pkg.instagram.headline.length <= 80 ? 'PASS' : 'FAIL', `Instagram headline is ${pkg.instagram.headline.length}/80 characters.`);
+  push('headline_length', pkg.instagramHeadline.length <= 80 ? 'PASS' : 'FAIL', `Instagram headline is ${pkg.instagramHeadline.length}/80 characters.`);
 
-  // 6. Hashtag count
-  push('hashtag_count', pkg.instagram.hashtags.length <= 5 ? 'PASS' : 'FAIL', `${pkg.instagram.hashtags.length}/5 hashtags.`);
-
-  // 7. Source IDs -- every reference should point at a source that was
+  // 6. Source IDs -- every reference should point at a source that was
   // actually supplied (the validator already rejects this structurally,
   // but this pass is defense in depth and reports it in QA terms too).
-  const badSourceRefs: string[] = [];
-  for (const fact of pkg.research.facts) {
-    for (const id of fact.sourceIds) if (!context.validSourceIds.has(id)) badSourceRefs.push(id);
-  }
-  for (const su of pkg.sourcesUsed) {
-    if (!context.validSourceIds.has(su.sourceId)) badSourceRefs.push(su.sourceId);
-  }
-  push('source_ids', badSourceRefs.length > 0 ? 'FAIL' : 'PASS', badSourceRefs.length > 0 ? `Unknown source id(s) referenced: ${[...new Set(badSourceRefs)].join(', ')}.` : 'All source id references are valid.');
+  const badSourceRefs = pkg.sourcesUsed.filter((id) => !context.validSourceIds.has(id));
+  push(
+    'source_ids',
+    badSourceRefs.length > 0 ? 'FAIL' : pkg.sourcesUsed.length === 0 ? 'WARNING' : 'PASS',
+    badSourceRefs.length > 0
+      ? `Unknown source id(s) referenced: ${[...new Set(badSourceRefs)].join(', ')}.`
+      : pkg.sourcesUsed.length === 0
+        ? 'No sources were cited -- unusual for a sourced editorial.'
+        : 'All source id references are valid.',
+  );
 
-  // 8. Image candidate URL
-  if (pkg.image.recommendedImageUrl === null) {
+  // 7. Image candidate URL
+  if (pkg.imageUrl === '') {
     push('image_candidate_url', 'PASS', 'No image recommended (acceptable).');
-  } else if (!context.candidateImageUrls.has(pkg.image.recommendedImageUrl)) {
+  } else if (!context.candidateImageUrls.has(pkg.imageUrl)) {
     push('image_candidate_url', 'FAIL', 'Recommended image URL does not match any supplied candidate.');
   } else {
     push('image_candidate_url', 'PASS', 'Recommended image URL matches a supplied candidate.');
   }
 
-  // 9. Malformed URLs (sourcesUsed + image)
-  const malformed: string[] = [];
-  for (const su of pkg.sourcesUsed) {
-    try {
-      new URL(su.url);
-    } catch {
-      malformed.push(`sourcesUsed[${su.sourceId}].url`);
-    }
-  }
-  push('malformed_urls', malformed.length > 0 ? 'FAIL' : 'PASS', malformed.length > 0 ? `Malformed URL(s): ${malformed.join(', ')}.` : 'All URLs are well-formed.');
-
-  // 10. Empty content (spot-check the sections array, beyond what required_fields covers)
-  const emptySections = pkg.article.sections.filter((s) => !s.heading.trim() || !s.body.trim()).length;
-  push('empty_content', emptySections > 0 ? 'FAIL' : 'PASS', emptySections > 0 ? `${emptySections} article section(s) have an empty heading or body.` : 'No empty sections.');
-
-  // 11. Confidence -- range already validated structurally; here we check
-  // the model's own status/confidence consistency (it was told: below 70
-  // means NEEDS_REVIEW).
-  const confidence = pkg.selfCheck.confidence;
-  if (confidence < 70 && pkg.status !== 'NEEDS_REVIEW') {
-    push('confidence', 'WARNING', `selfCheck.confidence is ${confidence} (<70) but status is "${pkg.status}", not "NEEDS_REVIEW" -- the model didn't apply its own rule.`);
-  } else {
-    push('confidence', 'PASS', `selfCheck.confidence is ${confidence}, consistent with status "${pkg.status}".`);
-  }
-
-  // 12. Unsupported claims / fabrications the model itself reported --
-  // informational, surfaced for admin review rather than auto-failing,
-  // since the model is expected to self-report honestly.
-  const selfReported =
-    pkg.selfCheck.unsupportedClaims.length +
-    pkg.selfCheck.fabricatedQuotes.length +
-    pkg.selfCheck.conflictingFacts.length +
-    pkg.selfCheck.missingAttribution.length;
-  if (pkg.selfCheck.fabricatedQuotes.length > 0) {
-    push('self_reported_issues', 'FAIL', `Model self-reported ${pkg.selfCheck.fabricatedQuotes.length} fabricated quote(s).`);
-  } else if (selfReported > 0) {
-    push('self_reported_issues', 'WARNING', `Model self-reported ${selfReported} issue(s) (unsupported claims, conflicting facts, or missing attribution) -- review before publishing.`);
-  } else {
-    push('self_reported_issues', 'PASS', 'Model reported no unsupported claims, fabricated quotes, conflicts, or missing attribution.');
-  }
+  // 8. Model self-reported warnings -- informational, surfaced for admin
+  // review rather than auto-failing, since the model is expected to
+  // self-report honestly.
+  push(
+    'self_reported_warnings',
+    pkg.warnings.length > 0 ? 'WARNING' : 'PASS',
+    pkg.warnings.length > 0 ? `Model self-reported ${pkg.warnings.length} warning(s) -- review before publishing.` : 'Model reported no warnings.',
+  );
 
   const overall = checks.reduce<QaSeverity>((acc, c) => worst(acc, c.severity), 'PASS');
-  return { overall, checks };
+
+  // Deterministic confidence score -- see this file's header comment for
+  // why this replaces a model-self-reported number.
+  const confidence = Math.max(
+    0,
+    100 - checks.filter((c) => c.severity === 'WARNING').length * CONFIDENCE_PENALTY_WARNING - checks.filter((c) => c.severity === 'FAIL').length * CONFIDENCE_PENALTY_FAIL,
+  );
+  const status = overall === 'FAIL' || confidence < NEEDS_REVIEW_CONFIDENCE_THRESHOLD ? 'NEEDS_REVIEW' : 'READY';
+
+  return { overall, checks, confidence, status };
 }
