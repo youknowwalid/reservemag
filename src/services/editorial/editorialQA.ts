@@ -14,13 +14,6 @@ const CONFIDENCE_PENALTY_WARNING = 10;
 const CONFIDENCE_PENALTY_FAIL = 25;
 const NEEDS_REVIEW_CONFIDENCE_THRESHOLD = 70;
 
-// Bengali is explicitly blocked because Bengali-language source material was
-// the failure mode that exposed this requirement. These ranges cover the
-// Bengali Unicode block and Bengali extended block. The model is instructed
-// to translate the source into English; this check is the final deterministic
-// gate so Bengali text can never silently reach publication as READY.
-const NON_ENGLISH_BENGALI_RE = /[\u0980-\u09FF\u{1CD0}-\u{1CFF]/u;
-
 function countWords(text: string): number {
   const t = text.trim();
   return t ? t.split(/\s+/).length : 0;
@@ -50,6 +43,14 @@ function englishTextFields(pkg: EditorialPackage): Array<[string, string]> {
   ];
 }
 
+// English editorial copy may contain Latin letters, punctuation, numbers,
+// symbols and normal Latin diacritics (e.g. café). Any other Unicode letter
+// script is rejected. This is intentionally broader than a Bengali-only
+// check: the magazine is English-only regardless of the source language.
+function hasNonLatinLetters(text: string): boolean {
+  return Array.from(text).some((char) => /\p{L}/u.test(char) && !/\p{Script=Latin}/u.test(char));
+}
+
 export function runEditorialQA(
   pkg: EditorialPackage,
   context: { validSourceIds: Set<string>; candidateImageUrls: Set<string> },
@@ -75,14 +76,14 @@ export function runEditorialQA(
 
   // 2. English-only publication gate
   const nonEnglishFields = englishTextFields(pkg)
-    .filter(([, value]) => NON_ENGLISH_BENGALI_RE.test(value))
+    .filter(([, value]) => hasNonLatinLetters(value))
     .map(([field]) => field);
   push(
     'english_only',
     nonEnglishFields.length > 0 ? 'FAIL' : 'PASS',
     nonEnglishFields.length > 0
-      ? `Non-English Bengali script detected in: ${nonEnglishFields.join(', ')}. Editorial output must be English only.`
-      : 'All generated editorial text is English-only with no Bengali script detected.',
+      ? `Non-English script detected in: ${nonEnglishFields.join(', ')}. Editorial output must be English only.`
+      : 'All generated editorial text uses Latin script and passes the English-only publication gate.',
   );
 
   // 3. Article length
