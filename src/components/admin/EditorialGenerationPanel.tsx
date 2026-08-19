@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ExternalLink, Image as ImageIcon, Loader2, Send, Sparkles, X, XCircle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import InstagramBannerPanel from './InstagramBannerPanel';
 import { articleService } from '../../services/articleService';
 import EditorialCoverStudio, { CoverStudioPackage } from './EditorialCoverStudio';
 
@@ -59,7 +60,8 @@ export default function EditorialGenerationPanel() {
       if (!session?.access_token) throw new Error('You must be signed in as an admin to generate an editorial.');
       const res = await fetch('/api/admin/editorial/generate', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ sourceUrls, subject: subject.trim() || undefined, requestedAngle: requestedAngle.trim() || undefined, contentType: contentType.trim() || undefined, confirmed: true }) });
       const parsed = await parseEditorialResponse(res);
-      if (!parsed.ok) throw new Error(parsed.message);
+      // `parsed.ok === false` (not `!parsed.ok`) so the discriminated union narrows correctly under this project's non-strict tsconfig.
+      if (parsed.ok === false) throw new Error(parsed.message);
       const data = parsed.data;
       if (!res.ok && !data?.status) throw new Error(data?.error || 'Editorial generation failed.');
       setResult(data);
@@ -102,7 +104,18 @@ export default function EditorialGenerationPanel() {
         <div className="space-y-2"><label className="text-[10px] uppercase tracking-widest text-zinc-500 block">Subject (optional)</label><input className="w-full bg-black border border-white/10 p-4 text-sm outline-none" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. Jane Doe, founder of..." /></div>
         <div className="space-y-2"><label className="text-[10px] uppercase tracking-widest text-zinc-500 block">Content Type (optional)</label><input className="w-full bg-black border border-white/10 p-4 text-sm outline-none" value={contentType} onChange={(e) => setContentType(e.target.value)} placeholder="e.g. profile, feature, interview" /></div>
       </div>
-      {[[sourceUrl1, setSourceUrl1, 'Source URL 1 (required)'], [sourceUrl2, setSourceUrl2, 'Source URL 2 (optional)'], [sourceUrl3, setSourceUrl3, 'Source URL 3 (optional)']].map(([value, setter, label]) => <div className="space-y-2" key={String(label)}><label className="text-[10px] uppercase tracking-widest text-zinc-500 block">{label}</label><input className="w-full bg-black border border-white/10 p-4 text-sm font-mono outline-none" value={String(value)} onChange={(e) => (setter as React.Dispatch<React.SetStateAction<string>>)(e.target.value)} placeholder="https://..." /></div>)}
+      {(
+        [
+          { value: sourceUrl1, setValue: setSourceUrl1, label: 'Source URL 1 (required)' },
+          { value: sourceUrl2, setValue: setSourceUrl2, label: 'Source URL 2 (optional)' },
+          { value: sourceUrl3, setValue: setSourceUrl3, label: 'Source URL 3 (optional)' },
+        ] as const
+      ).map(({ value, setValue, label }) => (
+        <div className="space-y-2" key={label}>
+          <label className="text-[10px] uppercase tracking-widest text-zinc-500 block">{label}</label>
+          <input className="w-full bg-black border border-white/10 p-4 text-sm font-mono outline-none" value={value} onChange={(e) => setValue(e.target.value)} placeholder="https://..." />
+        </div>
+      ))}
       <div className="space-y-2"><label className="text-[10px] uppercase tracking-widest text-zinc-500 block">Requested Editorial Angle (optional)</label><input className="w-full bg-black border border-white/10 p-4 text-sm outline-none" value={requestedAngle} onChange={(e) => setRequestedAngle(e.target.value)} placeholder="e.g. leadership, transformation, personal philosophy" /></div>
       <button type="submit" disabled={generating} className="px-8 py-3 bg-white text-black text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 disabled:opacity-50">{generating ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />} Generate Editorial</button>
     </form>
@@ -124,6 +137,8 @@ export default function EditorialGenerationPanel() {
         <div className="border border-white/10 bg-black/30 p-5 space-y-3"><div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-zinc-500"><ImageIcon size={13} /> Recommended source image</div>{cover?.imageUrl && <img src={cover.imageUrl} alt="Recommended source" className="max-h-80 max-w-full object-contain border border-white/10" />}<p className="text-xs text-zinc-500">{cover?.imageReason || pkg.imageReason}</p></div>
         {result.qa?.checks?.length ? <div className="space-y-2"><div className="text-[10px] uppercase tracking-widest text-zinc-500">QA Notes</div>{result.qa.checks.map((check) => <div key={`${check.check}-${check.message}`} className="flex gap-2 text-xs text-zinc-500"><AlertTriangle size={12} className={check.severity === 'FAIL' ? 'text-rose-400' : 'text-amber-400'} /><span><strong className="text-zinc-300">{check.check}:</strong> {check.message}</span></div>)}</div> : null}
         <div className="space-y-2"><div className="text-[10px] uppercase tracking-widest text-zinc-500">Sources Used</div>{pkg.sourcesUsed.map((sourceId) => { const source = result.sources.find((s) => s.sourceId === sourceId); return <a key={sourceId} href={source?.url} target="_blank" rel="noreferrer" className="block bg-black/40 border border-white/5 p-3 text-xs text-zinc-400 hover:text-white">{sourceId} — {source?.title || source?.url || 'Source'}</a>; })}</div>
+        {result.status === 'SUCCESS' && <InstagramBannerPanel generationId={result.id} editorialPackage={pkg} sources={result.sources} />}
+        {pkg.warnings.length > 0 && <div className="space-y-2"><div className="text-[10px] uppercase tracking-widest text-zinc-500">Model Warnings</div>{pkg.warnings.map((w, i) => <div key={i} className="text-xs p-3 border border-amber-500/20 bg-amber-500/5 text-amber-400">{w}</div>)}</div>}
         {!publishedArticleId && <div className="border border-amber-500/30 bg-amber-500/5 p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4"><div><div className="text-amber-400 text-xs font-bold uppercase tracking-widest">Generated — Not Published</div><div className="text-zinc-400 text-xs mt-1">Review the article and cover above. Nothing is public until you confirm.</div></div><button onClick={() => { setPublishError(null); setShowPublishConfirm(true); }} disabled={publishing || !cover?.imageUrl} className="px-6 py-3 bg-white text-black text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50"><Send size={14} /> Confirm &amp; Publish Now</button></div>}
       </>}
     </div>}
