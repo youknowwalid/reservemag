@@ -2,26 +2,37 @@
 // THE RESERVE's approved editorial banner template. Runs entirely in the
 // admin's browser: no new server dependency, no Vercel serverless-runtime
 // risk (directly avoiding a repeat of the jsdom/ESM incident two prior
-// passes had to fix), and it reuses the exact fonts already loaded
-// site-wide (Inter + Playfair Display, see src/index.css) so the banner
-// stays visually consistent with the rest of THE RESERVE's identity
-// without adding a single new font resource.
+// passes had to fix). Fonts: Inter (kicker/subtitle/credit line) is the
+// one already loaded site-wide (src/index.css); Bodoni Moda (masthead +
+// headline) is loaded specifically by this module -- see
+// ensureBodoniModaStylesheetInjected() below -- because the reference
+// masthead is a genuine high-contrast Didone/Bodoni-style face, which
+// Playfair Display (the site's own display serif) does not reproduce
+// closely enough. Scoped to this module rather than added to the global
+// stylesheet so it doesn't add a font request to every page on the site,
+// only when the banner tool is actually used.
 //
 // FIXED TEMPLATE, NOT A REDESIGN: every proportion, weight, and color
-// below was measured directly off the approved reference banner and is
+// below was measured directly off the approved reference banner files
+// (colors via programmatic pixel sampling -- see the CREAM/GOLD doc
+// comments below for exact source coordinates and sampled values) and is
 // meant to stay fixed. Only the inputs (background image, kicker,
 // subtitle, headline, credit line) are dynamic -- see
 // InstagramBannerPanel.tsx, which is the only caller and owns turning an
 // editorial generation's fields into these parameters.
 //
 // Reference layout (1080x1350, Instagram 4:5 portrait), top to bottom:
-//   "THE" (small tracked label) -> "RESERVE" (huge serif wordmark)
+//   "THE" (small tracked label) -> "RESERVE" (huge Bodoni Moda wordmark)
 //   kicker (tracked, gold)
 //   subtitle, up to 2 lines (tracked, cream)
 //   [photo fills the frame behind all of the above and below]
-//   headline, auto-sized to fit up to 3 lines (huge serif, cream)
+//   headline, auto-sized to fit up to 3 lines (huge Bodoni Moda, cream)
 //   credit line, centered (small tracked, muted cream)
-//   "R." monogram, bottom-right (serif, gold)
+//   "R." logo mark, bottom-right -- a fixed raster asset
+//   (public/assets/reserve-mark.png), drawn via drawImage, never redrawn
+//   with text or shapes (the real mark is a circular badge with its own
+//   metallic texture, embedded wordmark, and separate gold accent dot --
+//   nothing a font could reproduce).
 // A dark top-and-bottom gradient sits between the photo and the text so
 // every line stays legible regardless of what's in the source image.
 
@@ -29,11 +40,35 @@ export const BANNER_WIDTH = 1080;
 export const BANNER_HEIGHT = 1350;
 
 const MARGIN = 64;
-const CREAM = '#F5F1E8';
-const GOLD = '#C9A668';
 
-const FONT_SERIF = 'Playfair Display';
-const FONT_SANS = 'Inter';
+// Colors below were sampled programmatically from the two approved
+// reference files (the full banner template and the logo mark), not
+// eyeballed. Method: decode each file's actual pixel data, then take the
+// per-channel median over a filtered region of each element -- filtering
+// out anti-aliased edge pixels (e.g. "bright enough to be interior fill,
+// not a partial-coverage edge pixel") so the result reflects each
+// element's true flat fill color rather than an edge blend.
+//   CREAM -- median of the "RESERVE" masthead's letter interiors
+//     (reference banner, x:20-900 y:70-165, filtered to r,g,b>210/210/195)
+//     => rgb(241,238,225) / #F1EEE1, cross-checked against the logo
+//     mark's "R." letter interior (x:600-1300 y:600-1300, filtered
+//     r,g,b>200) => rgb(241,242,235) / #F1F2EB. The two are within a few
+//     values of each other; CREAM below is their average.
+//   GOLD -- median of the "LUXE" kicker's letter interiors (reference
+//     banner, x:150-600 y:280-335, filtered to isolate gold-toned
+//     pixels) => rgb(191,160,118) / #BFA076. (The logo mark's separate
+//     gold accent dot samples brighter, rgb(221,190,104) -- that pixel
+//     data is now part of the raster asset itself, not a color this file
+//     draws, so it isn't used here.)
+// Old (eyeballed, pre-fix) values were CREAM #F5F1E8, GOLD #C9A668 -- both
+// close, but not the reference's actual sampled values.
+const CREAM = '#F1F0E6';
+const GOLD = '#BFA076';
+
+const FONT_DISPLAY = 'Bodoni Moda'; // masthead + headline only
+const FONT_SANS = 'Inter'; // kicker, subtitle, credit line -- unchanged, already loaded site-wide
+
+const LOGO_ASSET_SRC = '/assets/reserve-mark.png';
 
 export interface InstagramBannerParams {
   /** A same-origin-safe image URL -- an object URL from the image proxy, or a data: URL. Never draw a raw cross-origin source URL directly (canvas export would throw). */
@@ -52,20 +87,79 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('Failed to load the banner image.'));
+    img.onerror = () => reject(new Error(`Failed to load image: ${src}`));
     img.src = src;
   });
 }
 
-/** Waits for the exact font weights this template draws with to be ready, so canvas text never silently falls back to a system font before the webfont finishes loading. */
+const BODONI_MODA_STYLESHEET_ID = 'reserve-banner-bodoni-moda-font';
+const BODONI_MODA_STYLESHEET_URL = 'https://fonts.googleapis.com/css2?family=Bodoni+Moda:wght@800&display=swap';
+
+let bodoniModaStylesheetPromise: Promise<void> | null = null;
+
+/**
+ * Injects the Bodoni Moda Google Fonts stylesheet once (idempotent),
+ * scoped to this module rather than added to src/index.css -- see this
+ * file's header comment for why. `document.fonts.load()` can only
+ * resolve a font whose @font-face rule is already registered in the
+ * CSSOM, so this must complete (the <link> itself finish loading) before
+ * ensureFontsReady() calls document.fonts.load() for Bodoni Moda, or
+ * that call has nothing to resolve against yet.
+ */
+function ensureBodoniModaStylesheetInjected(): Promise<void> {
+  if (typeof document === 'undefined') return Promise.resolve();
+
+  const existing = document.getElementById(BODONI_MODA_STYLESHEET_ID) as HTMLLinkElement | null;
+  if (existing) {
+    if (existing.dataset.loaded === 'true') return Promise.resolve();
+    return new Promise((resolve) => existing.addEventListener('load', () => resolve(), { once: true }));
+  }
+  if (bodoniModaStylesheetPromise) return bodoniModaStylesheetPromise;
+
+  bodoniModaStylesheetPromise = new Promise((resolve) => {
+    const link = document.createElement('link');
+    link.id = BODONI_MODA_STYLESHEET_ID;
+    link.rel = 'stylesheet';
+    link.href = BODONI_MODA_STYLESHEET_URL;
+    link.onload = () => {
+      link.dataset.loaded = 'true';
+      resolve();
+    };
+    // A blocked/failed font stylesheet request shouldn't hang banner
+    // rendering forever -- fall through and let the explicit
+    // document.fonts.check() below warn instead of silently retrying.
+    link.onerror = () => resolve();
+    document.head.appendChild(link);
+  });
+  return bodoniModaStylesheetPromise;
+}
+
+/**
+ * Waits for the exact font weights this template draws with to be ready,
+ * so canvas text never silently falls back to a system font before the
+ * webfont finishes loading -- then explicitly *confirms* Bodoni Moda
+ * actually loaded (document.fonts.check()), rather than assuming the
+ * await above means it worked. A failed confirmation is logged loudly:
+ * if fonts.googleapis.com is unreachable, the masthead/headline would
+ * otherwise silently render in a fallback serif with no visible error.
+ */
 async function ensureFontsReady(): Promise<void> {
   if (typeof document === 'undefined' || !('fonts' in document)) return;
+
+  await ensureBodoniModaStylesheetInjected();
   await Promise.all([
-    document.fonts.load(`800 100px "${FONT_SERIF}"`),
+    document.fonts.load(`800 100px "${FONT_DISPLAY}"`),
     document.fonts.load(`600 32px "${FONT_SANS}"`),
     document.fonts.load(`500 16px "${FONT_SANS}"`),
   ]);
   await document.fonts.ready;
+
+  if (!document.fonts.check(`800 100px "${FONT_DISPLAY}"`)) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[Instagram Banner] "${FONT_DISPLAY}" did not report as loaded -- the masthead/headline will likely render in a fallback serif instead. Check network access to fonts.googleapis.com.`,
+    );
+  }
 }
 
 /** Greedy word-wrap for canvas text -- ctx.font must already be set before calling. */
@@ -105,11 +199,11 @@ function fitHeadline(
   weight: number,
 ): { fontSize: number; lines: string[] } {
   for (let size = maxSize; size >= minSize; size -= 4) {
-    ctx.font = `${weight} ${size}px "${FONT_SERIF}"`;
+    ctx.font = `${weight} ${size}px "${FONT_DISPLAY}"`;
     const lines = wrapText(ctx, text, maxWidth);
     if (lines.length <= maxLines) return { fontSize: size, lines };
   }
-  ctx.font = `${weight} ${minSize}px "${FONT_SERIF}"`;
+  ctx.font = `${weight} ${minSize}px "${FONT_DISPLAY}"`;
   return { fontSize: minSize, lines: wrapText(ctx, text, maxWidth) };
 }
 
@@ -135,7 +229,8 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Canvas 2D context is not available in this browser.');
 
-  const [img] = await Promise.all([loadImage(params.imageSrc), ensureFontsReady()]);
+  const [img, logoImg] = await Promise.all([loadImage(params.imageSrc), loadImage(LOGO_ASSET_SRC)]);
+  await ensureFontsReady();
 
   // 1. Background image, cover-fit (fills the frame, cropped to center).
   const scale = Math.max(BANNER_WIDTH / img.width, BANNER_HEIGHT / img.height);
@@ -164,13 +259,13 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
   let cursorY = MARGIN + 20;
 
   // 3. "THE" / "RESERVE" wordmark -- fixed brand text, never dynamic.
-  ctx.fillStyle = 'rgba(245,241,232,0.9)';
+  ctx.fillStyle = 'rgba(241,240,230,0.9)';
   ctx.font = `600 20px "${FONT_SANS}"`;
   drawTrackedText(ctx, 'THE', MARGIN, cursorY, 6);
   cursorY += 92;
 
   ctx.fillStyle = CREAM;
-  ctx.font = `800 100px "${FONT_SERIF}"`;
+  ctx.font = `800 100px "${FONT_DISPLAY}"`;
   ctx.fillText('RESERVE', MARGIN, cursorY);
   cursorY += 56;
 
@@ -201,7 +296,7 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
   if (params.headline.trim()) {
     ctx.fillStyle = CREAM;
     const { fontSize, lines } = fitHeadline(ctx, params.headline.trim().toUpperCase(), contentWidth, 3, 96, 52, 800);
-    ctx.font = `800 ${fontSize}px "${FONT_SERIF}"`;
+    ctx.font = `800 ${fontSize}px "${FONT_DISPLAY}"`;
     const lineHeight = fontSize * 1.04;
     let y = headlineBottom - (lines.length - 1) * lineHeight;
     for (const line of lines) {
@@ -212,7 +307,7 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
 
   // 7. Credit line, centered.
   if (params.creditLine.trim()) {
-    ctx.fillStyle = 'rgba(245,241,232,0.75)';
+    ctx.fillStyle = 'rgba(241,240,230,0.75)';
     ctx.font = `500 15px "${FONT_SANS}"`;
     const text = params.creditLine.trim().toUpperCase();
     // Centered tracked text: measure the tracked width first, then start from the centered x.
@@ -223,12 +318,15 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
     drawTrackedText(ctx, text, (BANNER_WIDTH - trackedWidth) / 2, creditY, spacing);
   }
 
-  // 8. "R." monogram, bottom-right -- fixed brand mark, never dynamic.
-  ctx.fillStyle = GOLD;
-  ctx.font = `800 26px "${FONT_SERIF}"`;
-  ctx.textAlign = 'right';
-  ctx.fillText('R.', BANNER_WIDTH - MARGIN, creditY);
-  ctx.textAlign = 'left';
+  // 8. "R." logo mark, bottom-right -- the fixed raster asset
+  // (public/assets/reserve-mark.png), placed via drawImage exactly as
+  // produced from the approved reference file (circular badge, embedded
+  // "THE RESERVE" wordmark, separate gold accent dot, all baked into the
+  // asset's own pixels) -- never recreated with text or shapes.
+  const logoSize = 84;
+  const logoX = BANNER_WIDTH - MARGIN - logoSize;
+  const logoY = creditY - logoSize + 12;
+  ctx.drawImage(logoImg, logoX, logoY, logoSize, logoSize);
 }
 
 /** Converts the rendered canvas to a PNG Blob (used for both the Supabase Storage upload and the manual download button). */
