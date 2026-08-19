@@ -1,24 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Loader2, Sparkles, CheckCircle2, XCircle, AlertTriangle, X } from 'lucide-react';
+import { Loader2, Sparkles, CheckCircle2, XCircle, AlertTriangle, X, ExternalLink, Send } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { articleService } from '../../services/articleService';
 
 // Reserve Editorial Intelligence Engine -- admin UI.
 //
-// One click here triggers exactly one paid AI request ($0.50 against
-// Tabitoken's flat per-request pricing for claude-opus-4-8-thinking), so
-// generation always goes through an explicit confirmation dialog before
-// anything is sent to the server -- see the CANCEL / GENERATE -- $0.50
-// buttons below. The server (`/api/admin/editorial/generate`) enforces
-// this too: it refuses to run without `confirmed: true` in the request
-// body, so this isn't just a UI nicety.
-//
-// The "progress" steps below are a simulated/estimated client-side
-// sequence, not real-time server events -- the backend is a single
-// synchronous request/response (source retrieval, the one AI call,
-// validation, and QA all happen server-side before responding), so there
-// is no live progress channel to show. The steps advance on a timer while
-// the request is in flight and resolve to the real outcome the moment the
-// response arrives.
+// Generation and publication are deliberately separate actions:
+// 1) Generate = one paid Tabitoken request and returns a reviewable package.
+// 2) Confirm & Publish Now = a normal authenticated Supabase write; it does
+//    NOT call AI and does NOT cost another Tabitoken request.
+// This prevents an AI result from becoming publicly visible before the editor
+// has read it.
 
 const PROGRESS_STEPS = [
   'Retrieving sources',
@@ -43,11 +35,6 @@ interface GenerationResult {
   status: 'SUCCESS' | 'SOURCE_RETRIEVAL_FAILED' | 'GENERATION_FAILED' | 'VALIDATION_FAILED';
   failureReason: string | null;
   sources: SourceSummary[];
-  // Flat, minimal shape -- matches EditorialPackage in
-  // src/services/editorial/editorialTypes.ts. `sourcesUsed` is an array of
-  // source IDs (e.g. "source_1"), not full objects -- publisher/title/url
-  // are looked up from `sources` above for display, so the same data
-  // isn't duplicated over the wire.
   editorialPackage: {
     title: string;
     subtitle: string;
@@ -62,8 +49,6 @@ interface GenerationResult {
     sourcesUsed: string[];
     warnings: string[];
   } | null;
-  // status/confidence are computed server-side by editorialQA.ts, not
-  // self-reported by the model -- see that file's header comment.
   qa: { overall: 'PASS' | 'WARNING' | 'FAIL'; checks: Array<{ check: string; severity: string; message: string }>; confidence: number; status: 'READY' | 'NEEDS_REVIEW' } | null;
   requestedModel: string;
   servedModel: string | null;
@@ -71,22 +56,6 @@ interface GenerationResult {
   latencyMs: number | null;
 }
 
-/**
- * Safely reads the /api/admin/editorial/generate response. Every code path
- * inside that route replies with JSON (see server.ts), but the response can
- * still arrive as something else entirely if it never reaches the route
- * handler at all -- e.g. a platform-level crash page (HTML), a proxy
- * timeout (plain text), or a gateway error. Calling res.json() directly on
- * those throws a raw "Unexpected token '<'... is not valid JSON"
- * SyntaxError straight into the UI, which is neither useful nor safe (an
- * HTML error page can contain fragments of a stack trace). This reads the
- * body as text exactly once, tries to parse it as JSON regardless of the
- * declared content-type (some proxies mislabel it), and otherwise falls
- * back to a clean, generic, human-readable message. The raw body is only
- * ever logged to the browser console (a developer surface) -- never
- * rendered on screen -- and full diagnostics for the actual failure live
- * server-side, in the platform's function logs.
- */
 async function parseEditorialResponse(res: Response): Promise<{ ok: true; data: any } | { ok: false; message: string }> {
   const raw = await res.text();
 
@@ -118,6 +87,28 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+// The existing articleService slug helper strips non-ASCII letters. That
+// would turn a Bengali headline into an empty slug, so Editorial Factory
+// uses a Unicode-safe slug and a short timestamp suffix for uniqueness.
+function generateEditorialSlug(title: string): string {
+  const base = title
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, '')
+    .trim()
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 100);
+
+  const suffix = Date.now().toString(36);
+  return `${base || 'reserve-editorial'}-${suffix}`;
+}
+
+function estimateReadTime(text: string): string {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return `${Math.max(1, Math.ceil(words / 220))} min`;
+}
+
 export default function EditorialGenerationPanel() {
   const [subject, setSubject] = useState('');
   const [sourceUrl1, setSourceUrl1] = useState('');
@@ -127,10 +118,15 @@ export default function EditorialGenerationPanel() {
   const [contentType, setContentType] = useState('');
 
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showPublishConfirm, setShowPublishConfirm] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [step, setStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [publishError, setPublishError] = useState<string | null>(null);
   const [result, setResult] = useState<GenerationResult | null>(null);
+  const [publishedArticleId, setPublishedArticleId] = useState<string | null>(null);
+  const [publishedSlug, setPublishedSlug] = useState<string | null>(null);
   const stepTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => () => {
@@ -143,13 +139,12 @@ export default function EditorialGenerationPanel() {
     setShowConfirm(false);
     setGenerating(true);
     setError(null);
+    setPublishError(null);
     setResult(null);
+    setPublishedArticleId(null);
+    setPublishedSlug(null);
     setStep(1);
 
-    // Advance through the estimated steps while the single request is in
-    // flight. Stops at step 5 ("QA") and waits for the real response
-    // rather than claiming completion before the server has actually
-    // answered.
     stepTimer.current = setInterval(() => {
       setStep((s) => (s < 5 ? s + 1 : s));
     }, 4000);
@@ -195,14 +190,103 @@ export default function EditorialGenerationPanel() {
     setShowConfirm(true);
   };
 
+  const handlePublish = async () => {
+    if (!result?.editorialPackage || result.status !== 'SUCCESS' || publishedArticleId) return;
+
+    setShowPublishConfirm(false);
+    setPublishing(true);
+    setPublishError(null);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error('Your admin session has expired. Please sign in again.');
+
+      const pkg = result.editorialPackage;
+      const firstUsedSource = pkg.sourcesUsed
+        .map((sourceId) => result.sources.find((source) => source.sourceId === sourceId))
+        .find(Boolean);
+      const imageSource = result.sources.find((source) => source.url === pkg.imageUrl) || firstUsedSource;
+      const excerpt = pkg.subtitle?.trim() || pkg.article.trim().slice(0, 220);
+      const articleContent = pkg.article
+        .split(/\n\s*\n/)
+        .map((paragraph) => paragraph.trim())
+        .filter(Boolean)
+        .map((text, index) => ({
+          id: `${Date.now()}-${index}`,
+          type: 'paragraph' as const,
+          text,
+          style: {
+            bold: false,
+            italic: false,
+            underline: false,
+            fontSize: 'medium' as const,
+            alignment: 'left' as const,
+          },
+        }));
+
+      const publishDate = new Date();
+      const articleData = {
+        slug: generateEditorialSlug(pkg.title),
+        title: pkg.title,
+        subtitle: pkg.subtitle,
+        excerpt,
+        content: articleContent.length > 0 ? articleContent : [{
+          id: `${Date.now()}-0`,
+          type: 'paragraph' as const,
+          text: pkg.article,
+          style: {
+            bold: false,
+            italic: false,
+            underline: false,
+            fontSize: 'medium' as const,
+            alignment: 'left' as const,
+          },
+        }],
+        category: 'Culture',
+        status: 'published' as const,
+        featured: false,
+        author: 'THE RESERVE Editorial',
+        image: {
+          url: pkg.imageUrl || '',
+          credit: imageSource?.publisher || 'Source',
+          source: imageSource?.url || '',
+        },
+        mobileImage: {
+          url: pkg.imageUrl || '',
+          credit: imageSource?.publisher || 'Source',
+          source: imageSource?.url || '',
+        },
+        mobileCropX: 50,
+        readTime: estimateReadTime(pkg.article),
+        date: publishDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
+        publishDate: publishDate.toISOString(),
+        seo: {
+          metaTitle: pkg.title,
+          metaDescription: excerpt,
+          socialImage: pkg.imageUrl || '',
+        },
+      };
+
+      const articleId = await articleService.createArticle(articleData);
+      setPublishedArticleId(articleId);
+      setPublishedSlug(articleData.slug);
+    } catch (err: any) {
+      console.error('[Editorial Factory] Publish failed:', err);
+      setPublishError(err?.message || 'The editorial was generated but could not be published. No AI request will be made by retrying publication.');
+    } finally {
+      setPublishing(false);
+    }
+  };
+
   const pkg = result?.editorialPackage;
+  const publishedUrl = publishedSlug ? `/${publishedSlug}` : null;
 
   return (
     <div className="space-y-6 bg-zinc-900/30 p-8 border border-white/5">
       <div>
         <h2 className="text-xl font-serif">Editorial Factory -- Create Editorial</h2>
         <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-1">
-          Reserve Editorial Intelligence Engine -- one source-to-package generation per run
+          Reserve Editorial Intelligence Engine -- generate, review, then publish
         </p>
       </div>
 
@@ -230,92 +314,82 @@ export default function EditorialGenerationPanel() {
 
         <div className="space-y-2">
           <label className="text-[10px] uppercase tracking-widest text-zinc-500 block">Source URL 1 (required)</label>
-          <input
-            className="w-full bg-black border border-white/10 p-4 text-sm font-mono focus:border-reserve-accent outline-none"
-            value={sourceUrl1}
-            onChange={(e) => setSourceUrl1(e.target.value)}
-            placeholder="https://..."
-          />
+          <input className="w-full bg-black border border-white/10 p-4 text-sm font-mono focus:border-reserve-accent outline-none" value={sourceUrl1} onChange={(e) => setSourceUrl1(e.target.value)} placeholder="https://..." />
         </div>
         <div className="space-y-2">
           <label className="text-[10px] uppercase tracking-widest text-zinc-500 block">Source URL 2 (optional)</label>
-          <input
-            className="w-full bg-black border border-white/10 p-4 text-sm font-mono focus:border-reserve-accent outline-none"
-            value={sourceUrl2}
-            onChange={(e) => setSourceUrl2(e.target.value)}
-            placeholder="https://..."
-          />
+          <input className="w-full bg-black border border-white/10 p-4 text-sm font-mono focus:border-reserve-accent outline-none" value={sourceUrl2} onChange={(e) => setSourceUrl2(e.target.value)} placeholder="https://..." />
         </div>
         <div className="space-y-2">
           <label className="text-[10px] uppercase tracking-widest text-zinc-500 block">Source URL 3 (optional)</label>
-          <input
-            className="w-full bg-black border border-white/10 p-4 text-sm font-mono focus:border-reserve-accent outline-none"
-            value={sourceUrl3}
-            onChange={(e) => setSourceUrl3(e.target.value)}
-            placeholder="https://..."
-          />
+          <input className="w-full bg-black border border-white/10 p-4 text-sm font-mono focus:border-reserve-accent outline-none" value={sourceUrl3} onChange={(e) => setSourceUrl3(e.target.value)} placeholder="https://..." />
         </div>
         <div className="space-y-2">
           <label className="text-[10px] uppercase tracking-widest text-zinc-500 block">Requested Editorial Angle (optional)</label>
-          <input
-            className="w-full bg-black border border-white/10 p-4 text-sm focus:border-reserve-accent outline-none"
-            value={requestedAngle}
-            onChange={(e) => setRequestedAngle(e.target.value)}
-            placeholder="e.g. leadership, transformation, personal philosophy"
-          />
+          <input className="w-full bg-black border border-white/10 p-4 text-sm focus:border-reserve-accent outline-none" value={requestedAngle} onChange={(e) => setRequestedAngle(e.target.value)} placeholder="e.g. leadership, transformation, personal philosophy" />
         </div>
 
-        <button
-          type="submit"
-          disabled={generating}
-          className="px-8 py-3 bg-white text-black text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-reserve-accent transition-all disabled:opacity-50"
-        >
+        <button type="submit" disabled={generating} className="px-8 py-3 bg-white text-black text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:bg-reserve-accent transition-all disabled:opacity-50">
           {generating ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
           Generate Editorial
         </button>
       </form>
 
-      {error && (
-        <div className="flex items-center gap-2 text-rose-500 text-[10px]">
-          <XCircle size={12} /> {error}
-        </div>
-      )}
+      {error && <div className="flex items-center gap-2 text-rose-500 text-[10px]"><XCircle size={12} /> {error}</div>}
 
-      {/* Cost confirmation -- required before any AI request is sent. */}
       {showConfirm && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-6">
           <div className="w-full max-w-md bg-zinc-950 border border-white/10 p-8 space-y-6">
             <div className="flex items-start justify-between">
               <h3 className="text-lg font-serif">Confirm AI Generation</h3>
-              <button onClick={() => setShowConfirm(false)} className="text-zinc-500 hover:text-white">
-                <X size={16} />
-              </button>
+              <button onClick={() => setShowConfirm(false)} className="text-zinc-500 hover:text-white"><X size={16} /></button>
             </div>
-            <p className="text-sm text-zinc-300">
-              This editorial generation will use <strong>1 AI request</strong> at approximately <strong>$0.50</strong>.
-            </p>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest">
-              Provider: Tabitoken -- the configured production model (see server TABITOKEN_MODEL)
-            </p>
+            <p className="text-sm text-zinc-300">This editorial generation will use <strong>1 AI request</strong> at approximately <strong>$0.50</strong>.</p>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Provider: Tabitoken -- the configured production model (see server TABITOKEN_MODEL)</p>
             <div className="flex gap-4">
-              <button
-                onClick={() => setShowConfirm(false)}
-                className="flex-1 py-3 border border-white/10 text-[10px] uppercase tracking-widest hover:bg-white/5"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={runGeneration}
-                className="flex-1 py-3 bg-white text-black text-[10px] font-bold uppercase tracking-widest hover:bg-reserve-accent transition-all"
-              >
-                Generate -- $0.50
+              <button onClick={() => setShowConfirm(false)} className="flex-1 py-3 border border-white/10 text-[10px] uppercase tracking-widest hover:bg-white/5">Cancel</button>
+              <button onClick={runGeneration} className="flex-1 py-3 bg-white text-black text-[10px] font-bold uppercase tracking-widest hover:bg-reserve-accent transition-all">Generate -- $0.50</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {result?.status === 'SUCCESS' && pkg && !publishedArticleId && (
+        <div className="border border-amber-500/30 bg-amber-500/5 p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <div className="text-amber-400 text-xs font-bold uppercase tracking-widest">Generated -- Not Published</div>
+            <div className="text-zinc-400 text-xs mt-1">Read the complete editorial below. Nothing is public until you explicitly confirm publication.</div>
+          </div>
+          <button
+            onClick={() => { setPublishError(null); setShowPublishConfirm(true); }}
+            disabled={publishing}
+            className="px-6 py-3 bg-white text-black text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-reserve-accent transition-all disabled:opacity-50 whitespace-nowrap"
+          >
+            <Send size={14} /> Confirm & Publish Now
+          </button>
+        </div>
+      )}
+
+      {showPublishConfirm && pkg && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-6">
+          <div className="w-full max-w-md bg-zinc-950 border border-white/10 p-8 space-y-6">
+            <div className="flex items-start justify-between">
+              <h3 className="text-lg font-serif">Confirm Publication</h3>
+              <button onClick={() => setShowPublishConfirm(false)} className="text-zinc-500 hover:text-white"><X size={16} /></button>
+            </div>
+            <p className="text-sm text-zinc-300">You are about to publish <strong>“{pkg.title}”</strong> on THE RESERVE.</p>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-widest">This action does not make another AI request and does not consume Tabitoken quota.</p>
+            <div className="flex gap-4">
+              <button onClick={() => setShowPublishConfirm(false)} disabled={publishing} className="flex-1 py-3 border border-white/10 text-[10px] uppercase tracking-widest hover:bg-white/5">Cancel</button>
+              <button onClick={handlePublish} disabled={publishing} className="flex-1 py-3 bg-white text-black text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-reserve-accent transition-all disabled:opacity-50">
+                {publishing ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}
+                {publishing ? 'Publishing...' : 'Publish Now'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Progress */}
       {(generating || step > 0) && (
         <div className="space-y-2 bg-black/40 border border-white/5 p-6">
           {PROGRESS_STEPS.map((label, i) => {
@@ -332,7 +406,20 @@ export default function EditorialGenerationPanel() {
         </div>
       )}
 
-      {/* Result */}
+      {publishError && <div className="flex items-center gap-2 text-rose-400 text-xs border border-rose-500/20 bg-rose-500/5 p-4"><XCircle size={14} /> {publishError}</div>}
+
+      {publishedArticleId && publishedSlug && (
+        <div className="border border-emerald-500/30 bg-emerald-500/5 p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <div className="text-emerald-400 text-xs font-bold uppercase tracking-widest">PUBLISHED SUCCESSFULLY</div>
+            <div className="text-zinc-400 text-xs mt-1">The article is now live on THE RESERVE.</div>
+          </div>
+          <a href={publishedUrl || '#'} target="_blank" rel="noopener noreferrer" className="px-6 py-3 border border-white/10 text-white text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-white/5">
+            <ExternalLink size={14} /> View Published Article
+          </a>
+        </div>
+      )}
+
       {result && (
         <div className="space-y-6 pt-6 border-t border-white/5">
           <div className={`flex items-center gap-2 text-xs ${result.status === 'SUCCESS' ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -345,16 +432,7 @@ export default function EditorialGenerationPanel() {
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Field label="Article Title" value={pkg.title} />
-                <Field
-                  label="QA Status"
-                  value={
-                    result.qa && (
-                      <span className={`inline-flex items-center gap-1 ${result.qa.overall === 'PASS' ? 'text-emerald-400' : result.qa.overall === 'WARNING' ? 'text-amber-400' : 'text-rose-400'}`}>
-                        {result.qa.overall === 'FAIL' ? <AlertTriangle size={12} /> : <CheckCircle2 size={12} />} {result.qa.overall}
-                      </span>
-                    )
-                  }
-                />
+                <Field label="QA Status" value={result.qa && <span className={`inline-flex items-center gap-1 ${result.qa.overall === 'PASS' ? 'text-emerald-400' : result.qa.overall === 'WARNING' ? 'text-amber-400' : 'text-rose-400'}`}>{result.qa.overall === 'FAIL' ? <AlertTriangle size={12} /> : <CheckCircle2 size={12} />} {result.qa.overall}</span>} />
                 <Field label="Subtitle" value={pkg.subtitle} />
                 <Field label="Confidence" value={result.qa ? `${result.qa.confidence}/100 (${result.qa.status})` : null} />
                 <Field label="Recommended Image" value={pkg.imageUrl ? 'See preview below' : 'None selected'} />
@@ -385,11 +463,7 @@ export default function EditorialGenerationPanel() {
                 <div className="space-y-2">
                   {pkg.sourcesUsed.map((sourceId) => {
                     const s = result.sources.find((src) => src.sourceId === sourceId);
-                    return (
-                      <div key={sourceId} className="text-xs text-zinc-400 bg-black/40 border border-white/5 p-3">
-                        <span className="text-reserve-accent">{sourceId}</span> -- {s?.title || s?.url || 'unknown source'} ({s?.publisher || 'unknown publisher'})
-                      </div>
-                    );
+                    return <div key={sourceId} className="text-xs text-zinc-400 bg-black/40 border border-white/5 p-3"><span className="text-reserve-accent">{sourceId}</span> -- {s?.title || s?.url || 'unknown source'} ({s?.publisher || 'unknown publisher'})</div>;
                   })}
                 </div>
               </div>
@@ -397,24 +471,16 @@ export default function EditorialGenerationPanel() {
               {pkg.warnings.length > 0 && (
                 <div className="space-y-2">
                   <span className="text-[10px] uppercase tracking-widest text-zinc-500 block">Model Warnings</span>
-                  {pkg.warnings.map((w, i) => (
-                    <div key={i} className="text-xs p-3 border border-amber-500/20 bg-amber-500/5 text-amber-400">
-                      {w}
-                    </div>
-                  ))}
+                  {pkg.warnings.map((w, i) => <div key={i} className="text-xs p-3 border border-amber-500/20 bg-amber-500/5 text-amber-400">{w}</div>)}
                 </div>
               )}
 
               {result.qa && result.qa.checks.some((c) => c.severity !== 'PASS') && (
                 <div className="space-y-2">
                   <span className="text-[10px] uppercase tracking-widest text-zinc-500 block">QA Notes</span>
-                  {result.qa.checks
-                    .filter((c) => c.severity !== 'PASS')
-                    .map((c, i) => (
-                      <div key={i} className={`text-xs p-3 border ${c.severity === 'FAIL' ? 'border-rose-500/20 bg-rose-500/5 text-rose-400' : 'border-amber-500/20 bg-amber-500/5 text-amber-400'}`}>
-                        [{c.check}] {c.message}
-                      </div>
-                    ))}
+                  {result.qa.checks.filter((c) => c.severity !== 'PASS').map((c, i) => (
+                    <div key={i} className={`text-xs p-3 border ${c.severity === 'FAIL' ? 'border-rose-500/20 bg-rose-500/5 text-rose-400' : 'border-amber-500/20 bg-amber-500/5 text-amber-400'}`}>[{c.check}] {c.message}</div>
+                  ))}
                 </div>
               )}
             </>
