@@ -81,6 +81,9 @@ export interface InstagramBannerParams {
   headline: string;
   /** Small centered credit line, e.g. "PHOTO: JANE DOE // COURTESY: THE RESERVE". */
   creditLine: string;
+  /** Cover-fit focal point, 0-100 per axis (same semantics as CSS object-position -- 50/50 is centered, matching the article editor's crop tool). Defaults to 50/50 when omitted. */
+  focalX?: number;
+  focalY?: number;
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -232,12 +235,18 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
   const [img, logoImg] = await Promise.all([loadImage(params.imageSrc), loadImage(LOGO_ASSET_SRC)]);
   await ensureFontsReady();
 
-  // 1. Background image, cover-fit (fills the frame, cropped to center).
+  // 1. Background image, cover-fit, cropped around the given focal point
+  // (defaults to centered -- same 0-100/axis semantics as CSS
+  // object-position, matching the article editor's crop tool so the two
+  // features share one mental model even though this one draws via
+  // Canvas instead of CSS).
   const scale = Math.max(BANNER_WIDTH / img.width, BANNER_HEIGHT / img.height);
   const drawWidth = img.width * scale;
   const drawHeight = img.height * scale;
-  const drawX = (BANNER_WIDTH - drawWidth) / 2;
-  const drawY = (BANNER_HEIGHT - drawHeight) / 2;
+  const focalX = params.focalX ?? 50;
+  const focalY = params.focalY ?? 50;
+  const drawX = -(drawWidth - BANNER_WIDTH) * (focalX / 100);
+  const drawY = -(drawHeight - BANNER_HEIGHT) * (focalY / 100);
   ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
 
   // 2. Top and bottom dark gradients so the wordmark/kicker/subtitle and

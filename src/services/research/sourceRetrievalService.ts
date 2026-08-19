@@ -325,7 +325,13 @@ async function safeFetchHtml(startUrl: string, timeoutMs: number): Promise<SafeF
 // re-validation per hop, timeout, and a size cap.
 // ---------------------------------------------------------------------------
 
-const MAX_IMAGE_BYTES = 15 * 1024 * 1024; // 15 MB -- generous for a hero photo, still bounded
+// 30 MB -- raised from an initial 15 MB after real editorial source images
+// (full-resolution originals from publisher/fashion CDNs, as opposed to
+// web-optimized thumbnails) were legitimately hitting that ceiling on the
+// Instagram Banner Automation's image proxy. Still bounded, not
+// unlimited -- this is an admin-only, manually-triggered fetch, not a
+// public endpoint.
+const MAX_IMAGE_BYTES = 30 * 1024 * 1024;
 
 export interface SafeImageFetchResult {
   ok: boolean;

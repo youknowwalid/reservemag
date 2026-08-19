@@ -20,6 +20,7 @@ import { mediaService } from '../../services/mediaService';
 import RichTextEditor from './RichTextEditor';
 
 import ImageUploadForm from './ImageUploadForm';
+import FocalPointEditor from './shared/FocalPointEditor';
 import { categoryService } from '../../services/categoryService';
 
 export default function StoriesSection() {
@@ -30,7 +31,6 @@ export default function StoriesSection() {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [categories, setCategories] = useState<string[]>([]);
   const [authors, setAuthors] = useState<Author[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
     loadArticles();
@@ -86,16 +86,6 @@ export default function StoriesSection() {
       }
     };
     setEditingArticle(newArticle);
-  };
-
-  const handleMobileCropDrag = (e: React.MouseEvent | React.TouchEvent) => {
-    if (!editingArticle) return;
-    const container = (e.currentTarget as HTMLElement);
-    const rect = container.getBoundingClientRect();
-    const x = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
-    const relativeX = x - rect.left;
-    const percentage = Math.max(0, Math.min(100, (relativeX / rect.width) * 100));
-    setEditingArticle({ ...editingArticle, mobileCropX: Math.round(percentage) });
   };
 
   // Autosave logic
@@ -368,96 +358,19 @@ export default function StoriesSection() {
                 </div>
               </div>
 
-              {/* Mobile Crop Positioner */}
+              {/* Mobile Crop Positioner -- shared FocalPointEditor in horizontal-only mode, preserving the exact prior behavior/DB field (mobileCropX). */}
               {(editingArticle.image?.url || editingArticle.mobileImage?.url) && (
-                <div className="pt-12 border-t border-white/5 space-y-8">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                      <h3 className="text-sm font-serif text-white uppercase tracking-widest">Mobile Hero Crop Position</h3>
-                      <p className="text-[10px] text-zinc-500 uppercase tracking-widest">Define the focal point for portrait viewports</p>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <div className="text-[10px] text-zinc-500 uppercase tracking-widest font-mono">X-Offset: {editingArticle.mobileCropX ?? 50}%</div>
-                      <button 
-                        onClick={() => setEditingArticle({ ...editingArticle, mobileCropX: 50 })}
-                        className="text-[9px] uppercase tracking-widest text-reserve-accent hover:text-white transition-colors"
-                      >
-                        Reset to Center
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-                    <div className="space-y-6">
-                      <div 
-                        className="relative w-full max-w-[300px] mx-auto aspect-[4/5] bg-zinc-950 border border-white/10 overflow-hidden cursor-ew-resize group shadow-2xl"
-                        onMouseDown={(e) => { setIsDragging(true); handleMobileCropDrag(e); }}
-                        onMouseMove={(e) => { if (isDragging) handleMobileCropDrag(e); }}
-                        onMouseUp={() => setIsDragging(false)}
-                        onMouseLeave={() => setIsDragging(false)}
-                        onTouchStart={(e) => { setIsDragging(true); handleMobileCropDrag(e); }}
-                        onTouchMove={(e) => { if (isDragging) handleMobileCropDrag(e); }}
-                        onTouchEnd={() => setIsDragging(false)}
-                      >
-                        <img 
-                          src={editingArticle.mobileImage?.url || editingArticle.image?.url} 
-                          className="w-full h-full object-cover pointer-events-none select-none"
-                          style={{ objectPosition: `${editingArticle.mobileCropX ?? 50}% 50%` }}
-                          alt="Crop Preview"
-                          referrerPolicy="no-referrer"
-                        />
-                        {/* Frame Info */}
-                        <div className="absolute inset-0 border border-white/20 pointer-events-none" />
-                        <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1.5 border border-white/10">
-                          <span className="text-[8px] uppercase tracking-[0.2em] text-white">Mobile Preview Frame</span>
-                        </div>
-                        {/* Guide Lines */}
-                        <div className="absolute inset-0 grid grid-cols-3 pointer-events-none opacity-20 transition-opacity group-hover:opacity-40">
-                          <div className="border-r border-white" />
-                          <div className="border-r border-white" />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-8">
-                      <div className="p-6 bg-black/40 border border-white/5 space-y-6">
-                        <div className="space-y-4">
-                          <div className="flex justify-between text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-                            <span>Left</span>
-                            <span>Center</span>
-                            <span>Right</span>
-                          </div>
-                          <input 
-                            type="range"
-                            min="0"
-                            max="100"
-                            step="1"
-                            value={editingArticle.mobileCropX ?? 50}
-                            onChange={(e) => setEditingArticle({ ...editingArticle, mobileCropX: parseInt(e.target.value) })}
-                            className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-reserve-accent"
-                          />
-                        </div>
-                        
-                        <div className="space-y-3">
-                          <h4 className="text-[10px] uppercase tracking-widest text-zinc-300 font-bold">Positioning Guidelines</h4>
-                          <ul className="space-y-2">
-                            <li className="flex gap-3 text-[10px] text-zinc-500 leading-relaxed uppercase">
-                              <span className="text-reserve-accent">→</span>
-                              Drag the image or use the slider to center the primary subject.
-                            </li>
-                            <li className="flex gap-3 text-[10px] text-zinc-500 leading-relaxed uppercase">
-                              <span className="text-reserve-accent">→</span>
-                              This position applies to both "Mobile Image" and "Desktop Fallback".
-                            </li>
-                            <li className="flex gap-3 text-[10px] text-zinc-500 leading-relaxed uppercase">
-                              <span className="text-reserve-accent">→</span>
-                              Use the Rule of Thirds guides to help frame the focal point.
-                            </li>
-                          </ul>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                <div className="pt-12 border-t border-white/5">
+                  <FocalPointEditor
+                    axis="horizontal"
+                    aspectRatio="4/5"
+                    imageUrl={editingArticle.mobileImage?.url || editingArticle.image?.url || ''}
+                    x={editingArticle.mobileCropX ?? 50}
+                    y={50}
+                    onChange={(x) => setEditingArticle({ ...editingArticle, mobileCropX: x })}
+                    title="Mobile Hero Crop Position"
+                    helpText='Define the focal point for portrait viewports. Applies to both "Mobile Image" and "Desktop Fallback".'
+                  />
                 </div>
               )}
 

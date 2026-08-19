@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Loader2, ImageIcon, UploadCloud, Download, CheckCircle2, XCircle } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { renderInstagramBanner, canvasToPngBlob, BANNER_WIDTH, BANNER_HEIGHT } from '../../lib/instagramBannerRenderer';
+import FocalPointEditor from './shared/FocalPointEditor';
 
 // Instagram Banner Automation -- manual, on-demand step run from a
 // finished editorial generation's result. Prefills THE RESERVE's fixed
@@ -43,6 +44,13 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
   const [subtitle, setSubtitle] = useState(editorialPackage.coverSecondaryLine);
   const [headline, setHeadline] = useState(editorialPackage.instagramHeadline);
   const [imageUrl, setImageUrl] = useState(editorialPackage.imageUrl);
+  // Cover-fit focal point (0-100 per axis, same semantics as CSS
+  // object-position -- see FocalPointEditor and
+  // instagramBannerRenderer.ts's draw math). Reset to centered whenever
+  // the image URL changes, since a focal point picked for one photo
+  // rarely makes sense on a different one.
+  const [focalX, setFocalX] = useState(50);
+  const [focalY, setFocalY] = useState(50);
   const [creditLine, setCreditLine] = useState(() => {
     const publisher = sources.find((s) => s.status === 'SUCCESS')?.publisher;
     return publisher ? `COURTESY: ${publisher.toUpperCase()}` : 'COURTESY: THE RESERVE';
@@ -95,7 +103,7 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
 
       const canvas = canvasRef.current;
       if (!canvas) throw new Error('Canvas is not ready.');
-      await renderInstagramBanner(canvas, { imageSrc: objectUrl, kicker, subtitle, headline, creditLine });
+      await renderInstagramBanner(canvas, { imageSrc: objectUrl, kicker, subtitle, headline, creditLine, focalX, focalY });
       setHasPreview(true);
     } catch (err: any) {
       setError(err?.message || 'Failed to render the banner preview.');
@@ -196,8 +204,17 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
             <input className="w-full bg-black border border-white/10 p-3 text-xs" value={creditLine} onChange={(e) => setCreditLine(e.target.value)} />
           </div>
           <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-600 block">Image URL</label>
-            <input className="w-full bg-black border border-white/10 p-3 text-xs font-mono" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} placeholder="https://..." />
+            <label className="text-[9px] uppercase tracking-widest text-zinc-600 block">Image URL -- overrides the AI-recommended image if changed</label>
+            <input
+              className="w-full bg-black border border-white/10 p-3 text-xs font-mono"
+              value={imageUrl}
+              onChange={(e) => {
+                setImageUrl(e.target.value);
+                setFocalX(50);
+                setFocalY(50);
+              }}
+              placeholder="https://..."
+            />
           </div>
 
           <div className="flex flex-wrap gap-3 pt-2">
@@ -250,6 +267,35 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
           />
         </div>
       </div>
+
+      {/* Crop/focal-point editor -- the shared component also used by the
+          article editor's mobile hero crop tool (StoriesSection.tsx),
+          here in full 2D mode since the banner's fixed 1080x1350 frame
+          crops arbitrary source photos on both axes. Its own preview
+          uses the image URL directly (a plain <img> can display a
+          cross-origin image fine -- only canvas export needs the
+          proxy), so it gives instant feedback without waiting on a
+          fetch. Adjust here, then (re-)render to bake it into the
+          canvas -- matching how the article editor's crop tool works
+          (set position, then save), not a live-redraw-on-every-drag
+          canvas. */}
+      {imageUrl.trim() && (
+        <div className="pt-6 border-t border-white/5">
+          <FocalPointEditor
+            axis="both"
+            aspectRatio={`${BANNER_WIDTH}/${BANNER_HEIGHT}`}
+            imageUrl={imageUrl.trim()}
+            x={focalX}
+            y={focalY}
+            onChange={(x, y) => {
+              setFocalX(x);
+              setFocalY(y);
+            }}
+            title="Banner Focal Point"
+            helpText="Define the focal point for the banner's fixed frame, then re-render to apply it."
+          />
+        </div>
+      )}
     </div>
   );
 }
