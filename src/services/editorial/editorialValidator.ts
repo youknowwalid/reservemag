@@ -15,13 +15,13 @@
 
 import type { EditorialPackage, ValidationIssue, ValidationResult } from './editorialTypes';
 
-const VALID_STATUSES = new Set(['READY', 'NEEDS_REVIEW']);
-
-// Hard limits explicitly given in the task spec.
-const INSTAGRAM_KICKER_MAX = 40;
+// Hard limits. INSTAGRAM_HEADLINE_MAX/INSTAGRAM_SUBHEADLINE_MAX mirror the
+// original task spec's Instagram field limits. COVER_KICKER_MAX reuses the
+// same ceiling as a kicker-style short line is expected to be short
+// regardless of which surface (Instagram or cover) it labels.
+const COVER_KICKER_MAX = 40;
 const INSTAGRAM_HEADLINE_MAX = 80;
 const INSTAGRAM_SUBHEADLINE_MAX = 120;
-const INSTAGRAM_HASHTAG_MAX = 5;
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
@@ -35,10 +35,6 @@ function isStringArray(v: unknown): v is string[] {
   return Array.isArray(v) && v.every((item) => typeof item === 'string');
 }
 
-function isConfidence(v: unknown): v is number {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100;
-}
-
 function isValidUrl(v: string): boolean {
   try {
     const url = new URL(v);
@@ -49,13 +45,15 @@ function isValidUrl(v: string): boolean {
 }
 
 /**
- * Validates the structure of a parsed editorial package.
+ * Validates the structure of a parsed editorial package against the
+ * minimal, flat schema (see editorialTypes.ts's EditorialPackage doc
+ * comment).
  *
  * `validSourceIds` -- the `source_N` ids that were actually supplied in
  * this generation's prompt, used to catch a hallucinated source
  * reference. `candidateImageUrls` -- every image URL that was offered as
  * a candidate, used to catch a fabricated image URL (the task requires
- * `recommendedImageUrl` to come verbatim from the supplied candidates).
+ * `imageUrl` to come verbatim from the supplied candidates, or be `""`).
  */
 export function validateEditorialPackage(
   raw: unknown,
@@ -69,163 +67,43 @@ export function validateEditorialPackage(
   }
   const pkg = raw as Record<string, any>;
 
-  // status
-  if (!isString(pkg.status) || !VALID_STATUSES.has(pkg.status)) {
-    fail('status', `Must be "READY" or "NEEDS_REVIEW"; got ${JSON.stringify(pkg.status)}.`);
-  }
+  if (!isNonEmptyString(pkg.title)) fail('title', 'Required non-empty string.');
+  if (!isString(pkg.subtitle)) fail('subtitle', 'Required string.');
+  if (!isNonEmptyString(pkg.article)) fail('article', 'Required non-empty string.');
 
-  // subject
-  const subject = pkg.subject;
-  if (typeof subject !== 'object' || subject === null) {
-    fail('subject', 'Missing or not an object.');
-  } else {
-    if (!isNonEmptyString(subject.name)) fail('subject.name', 'Required non-empty string.');
-    if (!isString(subject.shortBio)) fail('subject.shortBio', 'Required string.');
-    for (const field of ['currentRole', 'organization', 'industry', 'location'] as const) {
-      if (subject[field] !== null && !isString(subject[field])) fail(`subject.${field}`, 'Must be a string or null.');
-    }
-    for (const field of ['careerHighlights', 'notableAchievements', 'keyThemes'] as const) {
-      if (!isStringArray(subject[field])) fail(`subject.${field}`, 'Must be an array of strings.');
-    }
-  }
+  if (!isNonEmptyString(pkg.instagramHeadline)) fail('instagramHeadline', 'Required non-empty string.');
+  else if (pkg.instagramHeadline.length > INSTAGRAM_HEADLINE_MAX) fail('instagramHeadline', `Exceeds ${INSTAGRAM_HEADLINE_MAX} characters.`);
 
-  // research
-  const research = pkg.research;
-  if (typeof research !== 'object' || research === null) {
-    fail('research', 'Missing or not an object.');
-  } else {
-    if (!isNonEmptyString(research.editorialAngle)) fail('research.editorialAngle', 'Required non-empty string.');
-    if (!isString(research.angleReason)) fail('research.angleReason', 'Required string.');
-    if (!Array.isArray(research.facts)) {
-      fail('research.facts', 'Must be an array.');
-    } else {
-      research.facts.forEach((f: any, i: number) => {
-        if (typeof f !== 'object' || f === null) {
-          fail(`research.facts[${i}]`, 'Must be an object.');
-          return;
-        }
-        if (!isNonEmptyString(f.claim)) fail(`research.facts[${i}].claim`, 'Required non-empty string.');
-        if (!isStringArray(f.sourceIds)) {
-          fail(`research.facts[${i}].sourceIds`, 'Must be an array of strings.');
-        } else {
-          for (const id of f.sourceIds) {
-            if (!context.validSourceIds.has(id)) {
-              fail(`research.facts[${i}].sourceIds`, `References unknown source id "${id}".`);
-            }
-          }
-        }
-        if (!isConfidence(f.confidence)) fail(`research.facts[${i}].confidence`, 'Must be a number 0-100.');
-      });
+  if (!isString(pkg.instagramSubheadline)) fail('instagramSubheadline', 'Required string.');
+  else if (pkg.instagramSubheadline.length > INSTAGRAM_SUBHEADLINE_MAX) fail('instagramSubheadline', `Exceeds ${INSTAGRAM_SUBHEADLINE_MAX} characters.`);
+
+  if (!isNonEmptyString(pkg.coverKicker)) fail('coverKicker', 'Required non-empty string.');
+  else if (pkg.coverKicker.length > COVER_KICKER_MAX) fail('coverKicker', `Exceeds ${COVER_KICKER_MAX} characters.`);
+
+  if (!isNonEmptyString(pkg.coverSecondaryLine)) fail('coverSecondaryLine', 'Required non-empty string.');
+
+  if (!isNonEmptyString(pkg.caption)) fail('caption', 'Required non-empty string.');
+
+  if (!isString(pkg.imageUrl)) {
+    fail('imageUrl', 'Must be a string ("" if no suitable image).');
+  } else if (pkg.imageUrl.length > 0) {
+    if (!isValidUrl(pkg.imageUrl)) {
+      fail('imageUrl', 'Not a well-formed http(s) URL.');
+    } else if (!context.candidateImageUrls.has(pkg.imageUrl)) {
+      fail('imageUrl', 'Does not match any supplied image candidate URL -- possible fabrication.');
     }
   }
+  if (!isString(pkg.imageReason)) fail('imageReason', 'Required string.');
 
-  // article
-  const article = pkg.article;
-  if (typeof article !== 'object' || article === null) {
-    fail('article', 'Missing or not an object.');
+  if (!isStringArray(pkg.sourcesUsed)) {
+    fail('sourcesUsed', 'Must be an array of source id strings.');
   } else {
-    if (!isNonEmptyString(article.title)) fail('article.title', 'Required non-empty string.');
-    if (!isString(article.subtitle)) fail('article.subtitle', 'Required string.');
-    if (!isNonEmptyString(article.introduction)) fail('article.introduction', 'Required non-empty string.');
-    if (!isNonEmptyString(article.conclusion)) fail('article.conclusion', 'Required non-empty string.');
-    if (!Array.isArray(article.sections) || article.sections.length === 0) {
-      fail('article.sections', 'Must be a non-empty array.');
-    } else {
-      article.sections.forEach((s: any, i: number) => {
-        if (typeof s !== 'object' || s === null) {
-          fail(`article.sections[${i}]`, 'Must be an object.');
-          return;
-        }
-        if (!isNonEmptyString(s.heading)) fail(`article.sections[${i}].heading`, 'Required non-empty string.');
-        if (!isNonEmptyString(s.body)) fail(`article.sections[${i}].body`, 'Required non-empty string.');
-      });
-    }
-  }
-
-  // instagram
-  const instagram = pkg.instagram;
-  if (typeof instagram !== 'object' || instagram === null) {
-    fail('instagram', 'Missing or not an object.');
-  } else {
-    if (!isNonEmptyString(instagram.kicker)) fail('instagram.kicker', 'Required non-empty string.');
-    else if (instagram.kicker.length > INSTAGRAM_KICKER_MAX) fail('instagram.kicker', `Exceeds ${INSTAGRAM_KICKER_MAX} characters.`);
-    if (!isNonEmptyString(instagram.headline)) fail('instagram.headline', 'Required non-empty string.');
-    else if (instagram.headline.length > INSTAGRAM_HEADLINE_MAX) fail('instagram.headline', `Exceeds ${INSTAGRAM_HEADLINE_MAX} characters.`);
-    if (!isNonEmptyString(instagram.subheadline)) fail('instagram.subheadline', 'Required non-empty string.');
-    else if (instagram.subheadline.length > INSTAGRAM_SUBHEADLINE_MAX)
-      fail('instagram.subheadline', `Exceeds ${INSTAGRAM_SUBHEADLINE_MAX} characters.`);
-    if (!isNonEmptyString(instagram.caption)) fail('instagram.caption', 'Required non-empty string.');
-    if (!isStringArray(instagram.hashtags)) fail('instagram.hashtags', 'Must be an array of strings.');
-    else if (instagram.hashtags.length > INSTAGRAM_HASHTAG_MAX) fail('instagram.hashtags', `Exceeds ${INSTAGRAM_HASHTAG_MAX} hashtags.`);
-  }
-
-  // cover
-  const cover = pkg.cover;
-  if (typeof cover !== 'object' || cover === null) {
-    fail('cover', 'Missing or not an object.');
-  } else {
-    if (!isNonEmptyString(cover.primaryHeadline)) fail('cover.primaryHeadline', 'Required non-empty string.');
-    if (!isNonEmptyString(cover.secondaryLine)) fail('cover.secondaryLine', 'Required non-empty string.');
-  }
-
-  // image
-  const image = pkg.image;
-  if (typeof image !== 'object' || image === null) {
-    fail('image', 'Missing or not an object.');
-  } else {
-    if (image.recommendedImageUrl !== null && !isString(image.recommendedImageUrl)) {
-      fail('image.recommendedImageUrl', 'Must be a string or null.');
-    } else if (typeof image.recommendedImageUrl === 'string') {
-      if (!isValidUrl(image.recommendedImageUrl)) {
-        fail('image.recommendedImageUrl', 'Not a well-formed http(s) URL.');
-      } else if (!context.candidateImageUrls.has(image.recommendedImageUrl)) {
-        fail('image.recommendedImageUrl', 'Does not match any supplied image candidate URL -- possible fabrication.');
-      }
-    }
-    if (image.recommendedImageSource !== null && !isString(image.recommendedImageSource)) {
-      fail('image.recommendedImageSource', 'Must be a string or null.');
-    }
-    if (!isString(image.imageReason)) fail('image.imageReason', 'Required string.');
-  }
-
-  // seo
-  const seo = pkg.seo;
-  if (typeof seo !== 'object' || seo === null) {
-    fail('seo', 'Missing or not an object.');
-  } else {
-    if (!isNonEmptyString(seo.title)) fail('seo.title', 'Required non-empty string.');
-    if (!isNonEmptyString(seo.description)) fail('seo.description', 'Required non-empty string.');
-    if (!isNonEmptyString(seo.slugSuggestion)) fail('seo.slugSuggestion', 'Required non-empty string.');
-  }
-
-  // sourcesUsed
-  if (!Array.isArray(pkg.sourcesUsed)) {
-    fail('sourcesUsed', 'Must be an array.');
-  } else {
-    pkg.sourcesUsed.forEach((s: any, i: number) => {
-      if (typeof s !== 'object' || s === null) {
-        fail(`sourcesUsed[${i}]`, 'Must be an object.');
-        return;
-      }
-      if (!isNonEmptyString(s.sourceId)) fail(`sourcesUsed[${i}].sourceId`, 'Required non-empty string.');
-      else if (!context.validSourceIds.has(s.sourceId)) fail(`sourcesUsed[${i}].sourceId`, `References unknown source id "${s.sourceId}".`);
-      if (!isString(s.publisher)) fail(`sourcesUsed[${i}].publisher`, 'Required string.');
-      if (!isString(s.title)) fail(`sourcesUsed[${i}].title`, 'Required string.');
-      if (!isNonEmptyString(s.url) || !isValidUrl(s.url)) fail(`sourcesUsed[${i}].url`, 'Must be a well-formed http(s) URL.');
-      if (!isStringArray(s.factsUsed)) fail(`sourcesUsed[${i}].factsUsed`, 'Must be an array of strings.');
+    pkg.sourcesUsed.forEach((id: string, i: number) => {
+      if (!context.validSourceIds.has(id)) fail(`sourcesUsed[${i}]`, `References unknown source id "${id}".`);
     });
   }
 
-  // selfCheck
-  const selfCheck = pkg.selfCheck;
-  if (typeof selfCheck !== 'object' || selfCheck === null) {
-    fail('selfCheck', 'Missing or not an object.');
-  } else {
-    for (const field of ['unsupportedClaims', 'fabricatedQuotes', 'conflictingFacts', 'missingAttribution', 'warnings'] as const) {
-      if (!isStringArray(selfCheck[field])) fail(`selfCheck.${field}`, 'Must be an array of strings.');
-    }
-    if (!isConfidence(selfCheck.confidence)) fail('selfCheck.confidence', 'Must be a number 0-100.');
-  }
+  if (!isStringArray(pkg.warnings)) fail('warnings', 'Must be an array of strings.');
 
   return { valid: issues.length === 0, issues };
 }

@@ -1,7 +1,8 @@
 // Reserve Editorial Intelligence Engine -- orchestrates one editorial
-// generation: retrieve sources, build one prompt, make exactly ONE AI
-// request, validate the response, run deterministic QA. This is the only
-// entry point the rest of the app should call for editorial generation.
+// generation: retrieve sources, build one compact prompt, make exactly
+// ONE AI request, extract and validate the response, run deterministic
+// QA. This is the only entry point the rest of the app should call for
+// editorial generation.
 //
 // COST SAFETY: an editorial generation is a paid, flat-rate Tabitoken
 // request. The AI call below is made with `retries: 0` -- this is a
@@ -16,12 +17,21 @@
 // callers, so a paid editorial generation can never silently become two
 // real requests.
 //
+// PLAIN-TEXT JSON: this call does NOT set `responseFormat`. Tabitoken is
+// an OpenAI-compatible gateway, not the OpenAI API itself -- depending on
+// provider-specific structured-output support was an unnecessary
+// compatibility risk. The request is the standard OpenAI-compatible
+// shape only (model, messages, max_tokens, temperature); the model is
+// told in the prompt to return JSON as plain text, and the response is
+// parsed with a bracket/string-aware extractor (jsonExtraction.ts) that
+// tolerates code fences or a stray sentence before/after the object.
+//
 // One editorial item = one AI request, full stop. No separate calls for
-// research, headline, caption, cover, SEO, or QA -- all of it is produced
-// by the single generation call and validated/QA'd deterministically
+// research, headline, caption, cover, or QA -- all of it is produced by
+// the single generation call and validated/QA'd deterministically
 // afterward. No retry-on-malformed-output layer is added here either: if
-// the model's response fails JSON parsing or structural validation, this
-// function returns a failed result and stops -- it never re-invokes
+// the model's response fails JSON extraction or structural validation,
+// this function returns a failed result and stops -- it never re-invokes
 // generation.
 //
 // SERVER-SIDE ONLY.
@@ -35,6 +45,7 @@ import {
 import { buildEditorialSystemPrompt, buildEditorialUserPrompt } from './editorialPromptBuilder';
 import { validateEditorialPackage, asEditorialPackage } from './editorialValidator';
 import { runEditorialQA } from './editorialQA';
+import { extractJsonObject } from './jsonExtraction';
 import type {
   EditorialErrorCategory,
   EditorialGenerationInput,
@@ -47,7 +58,14 @@ if (typeof window !== 'undefined') {
 }
 
 export const MAX_SOURCE_URLS_PER_JOB = 3;
-const GENERATION_MAX_TOKENS = 6000; // generous headroom for the full schema (article + instagram + cover + seo + research + selfCheck); flat per-request pricing means length isn't a cost driver here
+// The minimal schema (title/subtitle/article/instagram*/cover*/caption/
+// imageUrl/imageReason/sourcesUsed/warnings) is far smaller than the
+// original nested schema this replaced. ~900 words of article body is
+// roughly 1,350 tokens; the remaining fields add a few hundred more.
+// 4000 leaves comfortable headroom for a thinking model's response
+// without the excess of the old 6000 figure, which was sized for a
+// schema this generation call no longer sends.
+const GENERATION_MAX_TOKENS = 4000;
 const GENERATION_TEMPERATURE = 0.7;
 
 // Thinking-model generations against this schema run long. Configurable
@@ -86,31 +104,59 @@ function summarize(id: string | null, source: RetrievedSource): RetrievedSourceS
   };
 }
 
-function tryParseJson(text: string): unknown | null {
-  const cleaned = text
-    .trim()
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/```\s*$/i, '');
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    return null;
-  }
-}
-
-/** Maps a thrown generation error to a structured category + a safe, admin-facing message. Never includes credentials or internal provider details. */
+/**
+ * Maps a thrown generation error to a structured category + a specific,
+ * safe, admin-facing message -- never a single generic "the AI provider
+ * returned an error" (that message was itself the symptom of a real
+ * production incident: it made a genuine provider rejection
+ * indistinguishable from a server misconfiguration). Never includes
+ * credentials or internal provider details -- `error.responseBodySnippet`
+ * (already sanitized in tabitokenProvider.ts, stripped of anything
+ * resembling an API key or Authorization header) is logged server-side
+ * only, never returned to the client.
+ */
 function classifyGenerationError(error: unknown): { category: EditorialErrorCategory; message: string } {
   if (error instanceof AIProviderError) {
-    if (error.code === 'timeout') {
-      return { category: 'TIMEOUT', message: 'Editorial AI request timed out. No automatic retry was attempted.' };
+    // Full diagnostics, server-side only (Vercel function logs) -- this
+    // is exactly the information a prior production failure lacked,
+    // which made it impossible to tell a config problem from a genuine
+    // provider rejection after the fact.
+    console.error('[Editorial Generation] AI provider call failed.', {
+      code: error.code,
+      status: error.status ?? null,
+      providerErrorCode: error.providerErrorCode ?? null,
+      responseBodySnippet: error.responseBodySnippet ?? null,
+      message: error.message,
+    });
+
+    switch (error.code) {
+      case 'timeout':
+        return { category: 'TIMEOUT', message: 'Tabitoken did not respond within the allotted time. No automatic retry was attempted.' };
+      case 'config_error':
+        return {
+          category: 'CONFIGURATION_ERROR',
+          message: 'Editorial generation is not configured correctly on the server (AI provider credentials missing or invalid). No request was sent to Tabitoken -- contact an administrator.',
+        };
+      case 'authentication_error':
+        return { category: 'AUTHENTICATION_ERROR', message: `Tabitoken rejected the request's credentials (HTTP ${error.status ?? 401}). No automatic retry was attempted.` };
+      case 'access_denied':
+        return { category: 'ACCESS_DENIED', message: `Tabitoken denied access to this request (HTTP ${error.status ?? 403}). No automatic retry was attempted.` };
+      case 'invalid_request':
+        return { category: 'INVALID_REQUEST', message: `Tabitoken rejected the editorial request (HTTP ${error.status ?? 400}): invalid request parameters. No automatic retry was attempted.` };
+      case 'model_error':
+        return { category: 'MODEL_ERROR', message: `Tabitoken reported a model error (HTTP ${error.status ?? 404}) for "${getConfiguredEditorialModel()}". No automatic retry was attempted.` };
+      case 'rate_limit':
+        return { category: 'RATE_LIMIT', message: 'Tabitoken rate-limited this request (HTTP 429). No automatic retry was attempted.' };
+      case 'invalid_response':
+        return { category: 'MALFORMED_RESPONSE', message: 'Tabitoken returned a response that could not be read. No automatic retry was attempted.' };
+      case 'network_error':
+        return { category: 'PROVIDER_ERROR', message: 'Could not reach the Tabitoken gateway (network error). No automatic retry was attempted.' };
+      default:
+        return { category: 'PROVIDER_ERROR', message: `Tabitoken returned an error${error.status ? ` (HTTP ${error.status})` : ''}. No automatic retry was attempted.` };
     }
-    if (error.code === 'auth_error' || error.status === 403 || error.status === 401) {
-      return { category: 'ACCESS_DENIED', message: 'AI provider access was denied. No automatic retry was attempted.' };
-    }
-    return { category: 'PROVIDER_ERROR', message: 'The AI provider returned an error. No automatic retry was attempted.' };
   }
-  return { category: 'PROVIDER_ERROR', message: 'AI generation request failed. No automatic retry was attempted.' };
+  console.error('[Editorial Generation] Unclassified generation error (not an AIProviderError):', error);
+  return { category: 'UNKNOWN', message: 'Editorial generation failed for an unexpected reason. No automatic retry was attempted.' };
 }
 
 /**
@@ -198,10 +244,12 @@ export async function generateEditorialPackage(
   let usage: EditorialGenerationResult['usage'] = { promptTokens: null, completionTokens: null, totalTokens: null };
 
   try {
+    // No `responseFormat` -- standard OpenAI-compatible fields only
+    // (model/messages/max_tokens/temperature). See this file's header
+    // comment for why.
     const result = await generate({
       systemPrompt,
       userPrompt,
-      responseFormat: 'json_object',
       temperature: GENERATION_TEMPERATURE,
       maxTokens: GENERATION_MAX_TOKENS,
       timeoutMs: resolveGenerationTimeoutMs(),
@@ -214,12 +262,17 @@ export async function generateEditorialPackage(
   } catch (error) {
     latencyMs = Date.now() - generationStart;
     const { category, message } = classifyGenerationError(error);
+    // A CONFIGURATION_ERROR is thrown locally (missing/invalid credentials)
+    // before any network call is made -- no real Tabitoken request was
+    // ever attempted, so this must not be recorded as one. Every other
+    // category means an HTTP attempt genuinely happened.
+    const aiRequestAttempted = category !== 'CONFIGURATION_ERROR';
     return {
       ...baseResult,
       status: 'GENERATION_FAILED',
       failureReason: message,
       errorCategory: category,
-      aiRequestAttempted: true,
+      aiRequestAttempted,
       sources: allSourceSummaries,
       servedModel,
       usage,
@@ -227,13 +280,17 @@ export async function generateEditorialPackage(
     };
   }
 
-  // 4. Parse.
-  const parsed = tryParseJson(rawText);
+  // 4. Extract the JSON object from the response text -- bracket/string-
+  // aware (jsonExtraction.ts), tolerant of a stray code fence or a short
+  // sentence before/after the object (the model was asked for JSON-only
+  // text, not a provider-enforced JSON mode). No retry on failure: a bad
+  // extraction falls through to a failed result, never a second request.
+  const parsed = extractJsonObject(rawText);
   if (parsed === null) {
     return {
       ...baseResult,
       status: 'GENERATION_FAILED',
-      failureReason: 'AI response was not valid JSON. No automatic retry was attempted.',
+      failureReason: 'AI response did not contain a parseable JSON object. No automatic retry was attempted.',
       errorCategory: 'MALFORMED_RESPONSE',
       aiRequestAttempted: true,
       sources: allSourceSummaries,

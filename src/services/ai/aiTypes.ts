@@ -61,25 +61,48 @@ export interface AIConnectionTestResult {
   latencyMs?: number;
 }
 
+// Granular provider error codes. `authentication_error` (401) and
+// `access_denied` (403) are deliberately distinct -- one means "the
+// credentials are wrong," the other "the credentials are valid but this
+// request/resource is refused" -- callers that classify failures for an
+// admin-facing message (see editorialGenerationService.ts) need that
+// distinction; collapsing both into a single `auth_error` (the previous
+// shape of this type) is exactly the kind of information loss that turned
+// a real Tabitoken failure into the generic "The AI provider returned an
+// error" message this type was reworked to fix.
 export type AIErrorCode =
-  | 'config_error'
-  | 'auth_error'
+  | 'config_error' // thrown locally before any network call (e.g. missing TABITOKEN_API_KEY) -- the provider was never actually reached
+  | 'authentication_error' // HTTP 401 -- invalid/missing credentials
+  | 'access_denied' // HTTP 403 -- credentials valid, request refused
+  | 'invalid_request' // HTTP 400 (and not identified as a model problem)
+  | 'model_error' // HTTP 404, or a 400 whose body specifically identifies a model problem
+  | 'rate_limit' // HTTP 429
   | 'timeout'
-  | 'network_error'
-  | 'rate_limit'
-  | 'invalid_response'
-  | 'provider_error';
+  | 'network_error' // fetch itself failed (DNS, connection refused, etc.) -- no HTTP response at all
+  | 'invalid_response' // gateway responded, but the body wasn't usable (non-JSON, missing message content)
+  | 'provider_error' // HTTP 5xx, or any other unrecognized non-2xx status
+  | 'unknown_error';
 
 export class AIProviderError extends Error {
   readonly code: AIErrorCode;
   readonly status?: number;
+  /** The provider's own error code/type from its response body (e.g. `"model_not_found"`), when it returned one. Never the HTTP status -- that's `status`. */
+  readonly providerErrorCode?: string | null;
+  /** A truncated, sanitized excerpt of the provider's error response body -- API keys and Authorization headers are stripped before this is ever set. Safe to log; still not guaranteed safe to show an end user verbatim (it's the provider's own text), so callers should prefer a constructed message over echoing this raw. */
+  readonly responseBodySnippet?: string | null;
   override readonly cause?: unknown;
 
-  constructor(message: string, code: AIErrorCode, options?: { status?: number; cause?: unknown }) {
+  constructor(
+    message: string,
+    code: AIErrorCode,
+    options?: { status?: number; providerErrorCode?: string | null; responseBodySnippet?: string | null; cause?: unknown },
+  ) {
     super(message);
     this.name = 'AIProviderError';
     this.code = code;
     this.status = options?.status;
+    this.providerErrorCode = options?.providerErrorCode ?? null;
+    this.responseBodySnippet = options?.responseBodySnippet ?? null;
     this.cause = options?.cause;
   }
 }

@@ -76,6 +76,42 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Maps an HTTP status (plus whatever the provider's own error body told us)
+ * to a granular AIErrorCode, so callers can build an accurate, specific
+ * message instead of a generic "the provider returned an error" -- see
+ * aiTypes.ts's AIErrorCode doc comments for what each code means.
+ */
+function classifyHttpError(status: number, providerErrorCode: string | null, providerMessage: string | null): AIErrorCode {
+  if (status === 401) return 'authentication_error';
+  if (status === 403) return 'access_denied';
+  if (status === 429) return 'rate_limit';
+  if (status === 404) return 'model_error';
+  if (status === 400) {
+    const haystack = `${providerErrorCode ?? ''} ${providerMessage ?? ''}`.toLowerCase();
+    if (haystack.includes('model')) return 'model_error';
+    return 'invalid_request';
+  }
+  if (status >= 500) return 'provider_error';
+  return 'provider_error';
+}
+
+/**
+ * Strips anything that could leak a credential out of provider-supplied
+ * error text before it's stored on an AIProviderError or logged. This is
+ * defense in depth -- the text being sanitized is the *provider's own
+ * response body*, which should never contain our API key in the first
+ * place -- but it's cheap insurance against, e.g., a gateway echoing the
+ * request back in a diagnostic error message.
+ */
+function sanitizeProviderText(text: string, apiKey: string): string {
+  let out = text;
+  if (apiKey) out = out.split(apiKey).join('[REDACTED]');
+  out = out.replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]');
+  out = out.replace(/"?Authorization"?\s*:\s*"[^"]*"/gi, 'Authorization: "[REDACTED]"');
+  return out;
+}
+
 function tryParseJson(text: string): unknown | null {
   const cleaned = text
     .trim()
@@ -215,17 +251,32 @@ export class TabitokenProvider implements AIProvider {
     }
 
     if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      const code: AIErrorCode =
-        response.status === 401 || response.status === 403
-          ? 'auth_error'
-          : response.status === 429
-            ? 'rate_limit'
-            : 'provider_error';
+      const rawErrorText = await response.text().catch(() => '');
+      const sanitized = sanitizeProviderText(rawErrorText, config.apiKey).slice(0, 500);
+
+      // OpenAI-compatible gateways typically report errors as
+      // { "error": { "message": "...", "type"/"code": "..." } } -- pull
+      // that out when present so the classification and the message can
+      // be specific, but fall back gracefully to the sanitized raw text
+      // when the body isn't that shape (or isn't JSON at all).
+      let providerErrorCode: string | null = null;
+      let providerMessage: string | null = null;
+      try {
+        const parsedBody = JSON.parse(rawErrorText);
+        const errObj = parsedBody?.error;
+        if (errObj && typeof errObj === 'object') {
+          providerErrorCode = typeof errObj.code === 'string' ? errObj.code : typeof errObj.type === 'string' ? errObj.type : null;
+          providerMessage = typeof errObj.message === 'string' ? sanitizeProviderText(errObj.message, config.apiKey) : null;
+        }
+      } catch {
+        // Body wasn't JSON -- sanitized raw text above is all we have.
+      }
+
+      const code = classifyHttpError(response.status, providerErrorCode, providerMessage);
       throw new AIProviderError(
-        `Tabitoken gateway returned ${response.status}: ${errorText.slice(0, 500) || response.statusText}`,
+        `Tabitoken gateway returned HTTP ${response.status}${providerMessage ? `: ${providerMessage}` : sanitized ? `: ${sanitized}` : `: ${response.statusText}`}`,
         code,
-        { status: response.status },
+        { status: response.status, providerErrorCode, responseBodySnippet: sanitized },
       );
     }
 

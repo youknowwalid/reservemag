@@ -72,50 +72,25 @@ function fakeRetrieveSourcesSuccess(): (urls: string[]) => Promise<SourceRetriev
 }
 
 const VALID_PACKAGE = {
-  status: 'READY',
-  subject: {
-    name: 'Jane Test',
-    shortBio: 'A test subject.',
-    currentRole: null,
-    organization: null,
-    industry: null,
-    location: null,
-    careerHighlights: [],
-    notableAchievements: [],
-    keyThemes: ['testing'],
-  },
-  research: {
-    editorialAngle: 'innovation',
-    angleReason: 'The source supports it.',
-    facts: [{ claim: 'A test claim.', sourceIds: ['source_1'], confidence: 90 }],
-  },
-  article: {
-    title: 'A Test Headline',
-    subtitle: 'A test subtitle',
-    introduction:
-      'A test introduction paragraph with enough content to be meaningful for the deterministic QA check that flags an unrealistically short article. '.repeat(3),
-    sections: [
-      {
-        heading: 'A Section',
-        body: 'A section body with enough content to be meaningful for the deterministic QA check that flags an unrealistically short article, repeated a few times so the total word count clears the warning threshold as well as the hard failure floor. '.repeat(
-          10,
-        ),
-      },
-    ],
-    conclusion: 'A test conclusion paragraph with enough content to be meaningful for the QA length check. '.repeat(3),
-  },
-  instagram: {
-    kicker: 'TEST KICKER',
-    headline: 'A Short Test Headline',
-    subheadline: 'A short test subheadline for the cover.',
-    caption: 'A test caption for the post.',
-    hashtags: ['#test', '#reserve'],
-  },
-  cover: { primaryHeadline: 'Test Cover', secondaryLine: 'A short secondary line.' },
-  image: { recommendedImageUrl: IMAGE_URL, recommendedImageSource: 'source_1', imageReason: 'The strongest available candidate.' },
-  seo: { title: 'A Test Headline', description: 'A test SEO description.', slugSuggestion: 'a-test-headline' },
-  sourcesUsed: [{ sourceId: 'source_1', publisher: 'Example Publisher', title: 'Test Article', url: TEST_URL, factsUsed: ['A test claim.'] }],
-  selfCheck: { unsupportedClaims: [], fabricatedQuotes: [], conflictingFacts: [], missingAttribution: [], warnings: [], confidence: 92 },
+  title: 'A Test Headline',
+  subtitle: 'A test subtitle',
+  article:
+    'A test introduction paragraph with enough content to be meaningful for the deterministic QA check that flags an unrealistically short article. '.repeat(3) +
+    '\n\n' +
+    'A section body with enough content to be meaningful for the deterministic QA check that flags an unrealistically short article, repeated a few times so the total word count clears the warning threshold as well as the hard failure floor. '.repeat(
+      10,
+    ) +
+    '\n\n' +
+    'A test conclusion paragraph with enough content to be meaningful for the QA length check. '.repeat(3),
+  instagramHeadline: 'A Short Test Headline',
+  instagramSubheadline: 'A short test subheadline for the cover.',
+  coverKicker: 'TEST KICKER',
+  coverSecondaryLine: 'A short secondary line.',
+  caption: 'A test caption for the post.',
+  imageUrl: IMAGE_URL,
+  imageReason: 'The strongest available candidate.',
+  sourcesUsed: ['source_1'],
+  warnings: [],
 };
 
 function okAiResult(text: string): AIGenerateResult {
@@ -216,7 +191,7 @@ async function testStaleReclaim() {
 
 async function test403NoRetry() {
   console.log('\n=== simulated HTTP 403 -- no retry ===');
-  const mock = mockGenerateThrowsOnce(new AIProviderError('Tabitoken gateway returned 403: forbidden', 'auth_error', { status: 403 }));
+  const mock = mockGenerateThrowsOnce(new AIProviderError('Tabitoken gateway returned HTTP 403: forbidden', 'access_denied', { status: 403 }));
   const result = await generateEditorialPackage(baseInput, { generate: mock.fn, retrieveSources: fakeRetrieveSourcesSuccess() });
 
   assert(mock.callCount() === 1, 'the mocked provider was called exactly once', mock.callCount());
@@ -224,8 +199,8 @@ async function test403NoRetry() {
   assert(result.errorCategory === 'ACCESS_DENIED', 'error category is ACCESS_DENIED', result.errorCategory);
   assert(result.aiRequestAttempted === true, 'aiRequestAttempted is true (a request genuinely was made)');
   assert(
-    result.failureReason === 'AI provider access was denied. No automatic retry was attempted.',
-    'failure message matches the required admin-facing text',
+    result.failureReason === 'Tabitoken denied access to this request (HTTP 403). No automatic retry was attempted.',
+    'failure message is specific and includes the HTTP status',
     result.failureReason,
   );
   assert(!String(result.failureReason).toLowerCase().includes('bearer'), 'failure message does not leak the Authorization header');
@@ -240,10 +215,21 @@ async function testTimeoutNoRetry() {
   assert(result.status === 'GENERATION_FAILED', 'result status is GENERATION_FAILED', result.status);
   assert(result.errorCategory === 'TIMEOUT', 'error category is TIMEOUT', result.errorCategory);
   assert(
-    result.failureReason === 'Editorial AI request timed out. No automatic retry was attempted.',
+    result.failureReason === 'Tabitoken did not respond within the allotted time. No automatic retry was attempted.',
     'failure message matches the required admin-facing text',
     result.failureReason,
   );
+}
+
+async function testConfigErrorNoRequestAttempted() {
+  console.log('\n=== simulated CONFIGURATION_ERROR (missing credentials) -- no request attempted ===');
+  const mock = mockGenerateThrowsOnce(new AIProviderError('TABITOKEN_API_KEY is not set.', 'config_error'));
+  const result = await generateEditorialPackage(baseInput, { generate: mock.fn, retrieveSources: fakeRetrieveSourcesSuccess() });
+
+  assert(mock.callCount() === 1, 'the mocked provider entry point was called exactly once', mock.callCount());
+  assert(result.status === 'GENERATION_FAILED', 'result status is GENERATION_FAILED', result.status);
+  assert(result.errorCategory === 'CONFIGURATION_ERROR', 'error category is CONFIGURATION_ERROR', result.errorCategory);
+  assert(result.aiRequestAttempted === false, 'aiRequestAttempted is FALSE -- a config error means no real HTTP request ever reached Tabitoken', result.aiRequestAttempted);
 }
 
 async function testSuccessfulFlow() {
@@ -256,7 +242,8 @@ async function testSuccessfulFlow() {
   assert(result.validation?.valid === true, 'validation passed');
   assert(result.qa !== null, 'QA ran');
   assert(result.qa?.overall === 'PASS', 'QA overall is PASS for a clean fixture', result.qa);
-  assert(result.editorialPackage?.article.title === 'A Test Headline', 'editorial package content came through');
+  assert(result.editorialPackage?.title === 'A Test Headline', 'editorial package content came through');
+  assert(result.qa?.confidence !== undefined && result.qa!.confidence > 0, 'QA computed a deterministic confidence score', result.qa?.confidence);
 }
 
 async function testMalformedResponseNoRetry() {
@@ -271,7 +258,7 @@ async function testMalformedResponseNoRetry() {
 
 async function testStructurallyInvalidResponseNoRetry() {
   console.log('\n=== simulated structurally-invalid JSON (fabricated image URL) -- no retry, validation catches it ===');
-  const bad = { ...VALID_PACKAGE, image: { ...VALID_PACKAGE.image, recommendedImageUrl: 'https://not-a-real-candidate.example.com/fake.jpg' } };
+  const bad = { ...VALID_PACKAGE, imageUrl: 'https://not-a-real-candidate.example.com/fake.jpg' };
   const mock = mockGenerateReturns(JSON.stringify(bad));
   const result = await generateEditorialPackage(baseInput, { generate: mock.fn, retrieveSources: fakeRetrieveSourcesSuccess() });
 
@@ -279,7 +266,7 @@ async function testStructurallyInvalidResponseNoRetry() {
   assert(result.status === 'VALIDATION_FAILED', 'result status is VALIDATION_FAILED', result.status);
   assert(result.errorCategory === 'VALIDATION_FAILED', 'error category is VALIDATION_FAILED', result.errorCategory);
   assert(
-    (result.validation?.issues.length ?? 0) > 0 && result.validation!.issues.some((i) => i.field === 'image.recommendedImageUrl'),
+    (result.validation?.issues.length ?? 0) > 0 && result.validation!.issues.some((i) => i.field === 'imageUrl'),
     'validation flags the fabricated image URL specifically',
     result.validation?.issues,
   );
@@ -291,6 +278,7 @@ async function main() {
   await testStaleReclaim();
   await test403NoRetry();
   await testTimeoutNoRetry();
+  await testConfigErrorNoRequestAttempted();
   await testSuccessfulFlow();
   await testMalformedResponseNoRetry();
   await testStructurallyInvalidResponseNoRetry();

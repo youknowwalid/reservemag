@@ -14,97 +14,34 @@ export interface EditorialGenerationInput {
 
 export type EditorialStatus = 'READY' | 'NEEDS_REVIEW';
 
-export interface EditorialSubject {
-  name: string;
-  shortBio: string;
-  currentRole: string | null;
-  organization: string | null;
-  industry: string | null;
-  location: string | null;
-  careerHighlights: string[];
-  notableAchievements: string[];
-  keyThemes: string[];
-}
-
-export interface EditorialFact {
-  claim: string;
-  sourceIds: string[];
-  confidence: number;
-}
-
-export interface EditorialResearch {
-  editorialAngle: string;
-  angleReason: string;
-  facts: EditorialFact[];
-}
-
-export interface EditorialArticleSection {
-  heading: string;
-  body: string;
-}
-
-export interface EditorialArticle {
+/**
+ * The exact, minimal structure requested from the model in one generation
+ * call -- see editorialPromptBuilder.ts. Deliberately flat: no nested
+ * research/seo/subject/selfCheck structures, no per-field duplication of
+ * data the application already has (source publisher/title/url are looked
+ * up from the already-retrieved sources via `sourcesUsed`'s source IDs,
+ * not repeated by the model). Everything not strictly needed to produce
+ * the Reserve article, Instagram copy, and cover treatment is derived by
+ * application code afterward (editorialQA.ts) rather than requested from
+ * the model -- a smaller, simpler request is a more reliable one.
+ */
+export interface EditorialPackage {
   title: string;
   subtitle: string;
-  introduction: string;
-  sections: EditorialArticleSection[];
-  conclusion: string;
-}
-
-export interface EditorialInstagram {
-  kicker: string;
-  headline: string;
-  subheadline: string;
+  /** The full article body as continuous prose (paragraphs separated by blank lines) -- not a sections array. */
+  article: string;
+  instagramHeadline: string;
+  instagramSubheadline: string;
+  coverKicker: string;
+  coverSecondaryLine: string;
   caption: string;
-  hashtags: string[];
-}
-
-export interface EditorialCover {
-  primaryHeadline: string;
-  secondaryLine: string;
-}
-
-export interface EditorialImageRecommendation {
-  recommendedImageUrl: string | null;
-  recommendedImageSource: string | null;
+  /** Must exactly match one of the supplied image candidate URLs, or `""` if none is suitable. Never a URL the model invented. */
+  imageUrl: string;
   imageReason: string;
-}
-
-export interface EditorialSeo {
-  title: string;
-  description: string;
-  slugSuggestion: string;
-}
-
-export interface EditorialSourceUsed {
-  sourceId: string;
-  publisher: string;
-  title: string;
-  url: string;
-  factsUsed: string[];
-}
-
-export interface EditorialSelfCheck {
-  unsupportedClaims: string[];
-  fabricatedQuotes: string[];
-  conflictingFacts: string[];
-  missingAttribution: string[];
+  /** Source IDs (e.g. `"source_1"`) actually drawn on -- not duplicated source metadata; the app looks up publisher/title/url from the sources it already retrieved. */
+  sourcesUsed: string[];
+  /** The model's own brief self-flagged concerns (unsupported claims, weak sourcing, etc.), if any. */
   warnings: string[];
-  confidence: number;
-}
-
-/** The exact structure requested from the model in one generation call. */
-export interface EditorialPackage {
-  status: EditorialStatus;
-  subject: EditorialSubject;
-  research: EditorialResearch;
-  article: EditorialArticle;
-  instagram: EditorialInstagram;
-  cover: EditorialCover;
-  image: EditorialImageRecommendation;
-  seo: EditorialSeo;
-  sourcesUsed: EditorialSourceUsed[];
-  selfCheck: EditorialSelfCheck;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +69,18 @@ export interface QaCheckResult {
 export interface QaReport {
   overall: QaSeverity;
   checks: QaCheckResult[];
+  /**
+   * Deterministically computed by editorialQA.ts from the check results
+   * below (100 minus a penalty per WARNING/FAIL, floored at 0) -- not a
+   * number the model self-reports. The minimal request schema
+   * (editorialPromptBuilder.ts) deliberately doesn't ask the model for a
+   * confidence score; a rule-based score computed from objective checks
+   * (source-id validity, image-candidate match, length, duplication) is
+   * more trustworthy than a self-rating anyway.
+   */
+  confidence: number;
+  /** Deterministically derived from `overall`/`confidence`, not requested from the model -- see the confidence doc comment above. */
+  status: EditorialStatus;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,13 +98,28 @@ export type EditorialGenerationStatus =
 /**
  * Structured failure classification, stored alongside the free-text
  * `failureReason` for observability/filtering. `null` on success.
+ *
+ * The provider-facing categories (AUTHENTICATION_ERROR through UNKNOWN)
+ * mirror AIErrorCode (src/services/ai/aiTypes.ts) at a coarser,
+ * admin-facing grain -- see classifyGenerationError() in
+ * editorialGenerationService.ts for the mapping. Every one of them is
+ * reported with a specific, safe message (HTTP status + a short
+ * classification), never collapsed into a single generic "the AI provider
+ * returned an error."
  */
 export type EditorialErrorCategory =
   | 'SOURCE_RETRIEVAL'
   | 'TIMEOUT'
+  | 'AUTHENTICATION_ERROR'
   | 'ACCESS_DENIED'
+  | 'INVALID_REQUEST'
+  | 'MODEL_ERROR'
+  | 'RATE_LIMIT'
   | 'PROVIDER_ERROR'
   | 'MALFORMED_RESPONSE'
+  /** The AI provider was never actually contacted -- a server-side configuration problem (e.g. missing TABITOKEN_API_KEY) was caught before any network call. `aiRequestAttempted` is false for this category. */
+  | 'CONFIGURATION_ERROR'
+  | 'UNKNOWN'
   | 'VALIDATION_FAILED'
   | null;
 
