@@ -21,7 +21,7 @@ import { generate as aiGenerate, testAIConnection } from './src/services/ai';
 // URLs; nothing else in the app should call fetch() against an arbitrary
 // URL directly -- always go through this module so SSRF protection stays
 // centralized.
-import { retrieveSource } from './src/services/research/sourceRetrievalService';
+import { retrieveSource, safeFetchImage } from './src/services/research/sourceRetrievalService';
 // Reserve Editorial Intelligence Engine. Server-side only -- see
 // src/services/editorial/editorialGenerationService.ts. Orchestrates
 // source retrieval + the single AI generation call + validation + QA;
@@ -297,6 +297,35 @@ export async function createApp() {
       imageCount: source.images.length,
       articlePreview: source.articleText ? source.articleText.slice(0, 600) : null,
     });
+  });
+
+  // Image proxy for the Instagram Banner Automation stage's client-side
+  // canvas renderer (src/lib/instagramBannerRenderer.ts). A browser
+  // <canvas> cannot safely export pixels drawn from a cross-origin image
+  // unless that image was served with permissive CORS headers, which
+  // arbitrary editorial source sites virtually never send -- fetching the
+  // bytes server-side (through the same SSRF-guarded fetch used by the
+  // Source Retrieval Engine) and re-serving them from our own origin is
+  // the correct fix, not a workaround. Admin-gated like every other
+  // source/AI route; POST + a JSON body (not a plain <img src>) so the
+  // client can attach the same Authorization header every other admin
+  // request uses -- an <img> tag can't carry custom headers.
+  app.post('/api/admin/image-proxy', async (req, res) => {
+    const auth = await verifyAdminRequest(req);
+    if (auth.ok === false) return res.status(auth.status).json({ error: auth.error });
+
+    const { url } = req.body ?? {};
+    if (typeof url !== 'string' || !url.trim()) {
+      return res.status(400).json({ error: 'An image URL is required.' });
+    }
+
+    const result = await safeFetchImage(url.trim());
+    if (!result.ok || !result.bytes) {
+      return res.status(502).json({ error: result.reason || 'Failed to fetch the image.' });
+    }
+    res.setHeader('Content-Type', result.contentType || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    return res.status(200).send(result.bytes);
   });
 
   // Reserve Editorial Intelligence Engine -- one editorial item, one AI

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Loader2, Sparkles, CheckCircle2, XCircle, AlertTriangle, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import InstagramBannerPanel from './InstagramBannerPanel';
 
 // Reserve Editorial Intelligence Engine -- admin UI.
 //
@@ -393,6 +394,10 @@ export default function EditorialGenerationPanel() {
                   })}
                 </div>
               </div>
+
+              {result.status === 'SUCCESS' && (
+                <InstagramBannerPanel generationId={result.id} editorialPackage={pkg} sources={result.sources} />
+              )}
 
               {pkg.warnings.length > 0 && (
                 <div className="space-y-2">

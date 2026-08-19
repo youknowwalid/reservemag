@@ -310,6 +310,131 @@ async function safeFetchHtml(startUrl: string, timeoutMs: number): Promise<SafeF
   return { ok: false, status: null, html: null, finalUrl: currentUrl, reason: `Too many redirects (max ${MAX_REDIRECTS}).`, errorKind: 'FAILED' };
 }
 
+// ---------------------------------------------------------------------------
+// Safe image fetch (Instagram Banner Automation's image proxy)
+//
+// Browser <canvas> cannot safely export pixels drawn from a cross-origin
+// image unless that image was served with permissive CORS headers, which
+// arbitrary editorial source sites virtually never send -- drawing a
+// "tainted" canvas throws on export. Fetching the bytes server-side
+// (through the same SSRF-guarded fetch posture as safeFetchHtml above)
+// and re-serving them from our own origin (server.ts's
+// /api/admin/image-proxy) is the correct fix for that, not a workaround.
+// Binary-safe (no text decoding) and restricted to image content types,
+// otherwise identical in spirit to safeFetchHtml: manual redirect
+// re-validation per hop, timeout, and a size cap.
+// ---------------------------------------------------------------------------
+
+const MAX_IMAGE_BYTES = 15 * 1024 * 1024; // 15 MB -- generous for a hero photo, still bounded
+
+export interface SafeImageFetchResult {
+  ok: boolean;
+  status: number | null;
+  bytes: Buffer | null;
+  contentType: string | null;
+  finalUrl: string;
+  reason: string | null;
+}
+
+export async function safeFetchImage(startUrl: string, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<SafeImageFetchResult> {
+  let currentUrl = startUrl;
+  const overallDeadline = Date.now() + timeoutMs * (MAX_REDIRECTS + 1);
+
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    if (Date.now() > overallDeadline) {
+      return { ok: false, status: null, bytes: null, contentType: null, finalUrl: currentUrl, reason: 'Overall request duration exceeded.' };
+    }
+
+    const check = await validateUrlForFetch(currentUrl);
+    if (!check.ok || !check.url) {
+      return { ok: false, status: null, bytes: null, contentType: null, finalUrl: currentUrl, reason: check.reason ?? 'Blocked by URL safety checks.' };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let response: Response;
+    try {
+      response = await fetch(check.url.toString(), {
+        method: 'GET',
+        redirect: 'manual',
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'ReserveMagazineEditorialBot/1.0 (+https://thereservemag.com)',
+          Accept: 'image/*',
+        },
+      });
+    } catch (error: any) {
+      clearTimeout(timer);
+      if (error?.name === 'AbortError') {
+        return { ok: false, status: null, bytes: null, contentType: null, finalUrl: currentUrl, reason: `Request timed out after ${timeoutMs}ms.` };
+      }
+      return { ok: false, status: null, bytes: null, contentType: null, finalUrl: currentUrl, reason: 'Network error while fetching the image.' };
+    }
+    clearTimeout(timer);
+
+    // Redirects re-validated one hop at a time, same as safeFetchHtml.
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      if (!location) {
+        return { ok: false, status: response.status, bytes: null, contentType: null, finalUrl: currentUrl, reason: 'Redirect with no Location header.' };
+      }
+      try {
+        currentUrl = new URL(location, currentUrl).toString();
+      } catch {
+        return { ok: false, status: response.status, bytes: null, contentType: null, finalUrl: currentUrl, reason: 'Redirect target is not a valid URL.' };
+      }
+      continue;
+    }
+
+    if (!response.ok) {
+      return { ok: false, status: response.status, bytes: null, contentType: null, finalUrl: currentUrl, reason: `Image source returned HTTP ${response.status}.` };
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!/^image\//i.test(contentType)) {
+      return {
+        ok: false,
+        status: response.status,
+        bytes: null,
+        contentType: contentType || null,
+        finalUrl: currentUrl,
+        reason: `Unsupported content type: ${contentType.split(';')[0] || 'unknown'} (expected an image).`,
+      };
+    }
+
+    const declaredLength = Number(response.headers.get('content-length') || 0);
+    if (declaredLength > MAX_IMAGE_BYTES) {
+      return { ok: false, status: response.status, bytes: null, contentType, finalUrl: currentUrl, reason: 'Image exceeds the maximum allowed size.' };
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      const buf = Buffer.from(await response.arrayBuffer());
+      if (buf.byteLength > MAX_IMAGE_BYTES) {
+        return { ok: false, status: response.status, bytes: null, contentType, finalUrl: currentUrl, reason: 'Image exceeds the maximum allowed size.' };
+      }
+      return { ok: true, status: response.status, bytes: buf, contentType, finalUrl: currentUrl, reason: null };
+    }
+
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > MAX_IMAGE_BYTES) {
+        await reader.cancel().catch(() => {});
+        return { ok: false, status: response.status, bytes: null, contentType, finalUrl: currentUrl, reason: 'Image exceeds the maximum allowed size.' };
+      }
+      chunks.push(value);
+    }
+    return { ok: true, status: response.status, bytes: Buffer.concat(chunks.map((c) => Buffer.from(c))), contentType, finalUrl: currentUrl, reason: null };
+  }
+
+  return { ok: false, status: null, bytes: null, contentType: null, finalUrl: currentUrl, reason: `Too many redirects (max ${MAX_REDIRECTS}).` };
+}
+
 function looksPaywalled(rawHtml: string, wordCount: number): boolean {
   if (wordCount > 150) return false; // substantial content extracted -- unlikely to actually be walled off
   const lower = rawHtml.toLowerCase();
