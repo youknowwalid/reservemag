@@ -70,6 +70,29 @@ const FONT_SANS = 'Inter'; // kicker, subtitle, credit line -- unchanged, alread
 
 const LOGO_ASSET_SRC = '/assets/reserve-mark.png';
 
+/**
+ * Manual per-element adjustment, layered on top of this template's auto
+ * layout -- never a replacement for it. `fontSize` overrides the
+ * element's auto-computed size (kicker/subtitle default to a fixed size,
+ * headline to fitHeadline()'s result); `offsetX`/`offsetY` are pixel
+ * deltas applied on top of the auto-computed position, not absolute
+ * coordinates, so "reset to auto" is simply omitting the override (or
+ * setting all three back to undefined/0) rather than needing to know
+ * what the auto position was.
+ */
+export interface ElementOverride {
+  fontSize?: number;
+  offsetX?: number;
+  offsetY?: number;
+}
+
+export interface InstagramBannerOverrides {
+  kicker?: ElementOverride;
+  subtitle?: ElementOverride;
+  headline?: ElementOverride;
+  logo?: ElementOverride;
+}
+
 export interface InstagramBannerParams {
   /** A same-origin-safe image URL -- an object URL from the image proxy, or a data: URL. Never draw a raw cross-origin source URL directly (canvas export would throw). */
   imageSrc: string;
@@ -84,6 +107,8 @@ export interface InstagramBannerParams {
   /** Cover-fit focal point, 0-100 per axis (same semantics as CSS object-position -- 50/50 is centered, matching the article editor's crop tool). Defaults to 50/50 when omitted. */
   focalX?: number;
   focalY?: number;
+  /** Manual per-element font-size/position adjustments -- see ElementOverride. Never applies to the "THE"/"RESERVE" masthead, which stays auto-fixed. */
+  overrides?: InstagramBannerOverrides;
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
@@ -220,6 +245,33 @@ function drawTrackedText(ctx: CanvasRenderingContext2D, text: string, x: number,
 }
 
 /**
+ * Finds the font size at which `text` measures as close as possible to
+ * `targetWidth` (clamped to [minSize, maxSize]). Used for the "RESERVE"
+ * masthead, which the reference spans nearly the full canvas width at --
+ * a fixed font size can't guarantee that (measured width scales with the
+ * actual glyphs, not a size chosen by eye), so this measures at a
+ * reference size and scales proportionally, matching how fitHeadline()
+ * already shrinks-to-fit the bottom headline, just solving for width
+ * instead of line count.
+ */
+function fitTextToWidth(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  targetWidth: number,
+  weight: number,
+  fontFamily: string,
+  minSize: number,
+  maxSize: number,
+): number {
+  const referenceSize = 100;
+  ctx.font = `${weight} ${referenceSize}px "${fontFamily}"`;
+  const referenceWidth = ctx.measureText(text).width;
+  if (referenceWidth <= 0) return maxSize;
+  const fitted = (targetWidth / referenceWidth) * referenceSize;
+  return Math.max(minSize, Math.min(maxSize, fitted));
+}
+
+/**
  * Renders THE RESERVE's Instagram banner template onto `canvas` (sized to
  * BANNER_WIDTH x BANNER_HEIGHT internally, regardless of the canvas
  * element's CSS display size). Never throws for a missing/short text
@@ -267,49 +319,91 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
   const contentWidth = BANNER_WIDTH - MARGIN * 2;
   let cursorY = MARGIN + 20;
 
-  // 3. "THE" / "RESERVE" wordmark -- fixed brand text, never dynamic.
+  // 3. "THE" / "RESERVE" wordmark -- fixed brand text, never dynamic
+  // content, but the masthead's SIZE is fit to width: the reference
+  // spans nearly the full canvas width, and a fixed pixel size can't
+  // guarantee that (a fixed 100px measured only ~52% of contentWidth in
+  // Bodoni Moda -- the earlier bug this replaces). Every gap below it is
+  // computed as a multiple of the ACTUAL fitted size (not a flat pixel
+  // constant tuned for one specific size), so spacing stays correct
+  // regardless of how large the fitted masthead turns out to be -- e.g.
+  // for a longer/shorter wordmark, or if the target width or font ever
+  // changes. `ascent(size)` approximates a serif font's cap-height, i.e.
+  // how far a following baseline needs to sit below this one's baseline
+  // to clear its glyphs; it's the standard rule of thumb for laying out
+  // stacked text on a canvas without real font-metrics APIs.
+  const ascent = (size: number) => size * 0.72;
+
   ctx.fillStyle = 'rgba(241,240,230,0.9)';
   ctx.font = `600 20px "${FONT_SANS}"`;
   drawTrackedText(ctx, 'THE', MARGIN, cursorY, 6);
-  cursorY += 92;
 
+  const mastheadSize = fitTextToWidth(ctx, 'RESERVE', contentWidth * 0.97, 800, FONT_DISPLAY, 80, 260);
+  cursorY += 20 + ascent(mastheadSize);
   ctx.fillStyle = CREAM;
-  ctx.font = `800 100px "${FONT_DISPLAY}"`;
+  ctx.font = `800 ${mastheadSize}px "${FONT_DISPLAY}"`;
   ctx.fillText('RESERVE', MARGIN, cursorY);
-  cursorY += 56;
 
-  // 4. Kicker (gold).
+  // 4. Kicker (gold). Gap below the masthead scales with its actual size.
+  // `offsetX`/`offsetY` (manual overrides) only nudge where THIS element
+  // draws -- they never feed back into cursorY, so a manual nudge on one
+  // element can't cascade into misplacing the elements after it.
+  const overrides = params.overrides ?? {};
+  cursorY += mastheadSize * 0.22;
   if (params.kicker.trim()) {
+    const kickerSize = overrides.kicker?.fontSize ?? 28;
+    cursorY += ascent(kickerSize);
     ctx.fillStyle = GOLD;
-    ctx.font = `600 28px "${FONT_SANS}"`;
-    drawTrackedText(ctx, params.kicker.trim().toUpperCase(), MARGIN, cursorY, 5);
-    cursorY += 46;
+    ctx.font = `600 ${kickerSize}px "${FONT_SANS}"`;
+    drawTrackedText(
+      ctx,
+      params.kicker.trim().toUpperCase(),
+      MARGIN + (overrides.kicker?.offsetX ?? 0),
+      cursorY + (overrides.kicker?.offsetY ?? 0),
+      5,
+    );
+    cursorY += kickerSize * 0.5;
   }
 
   // 5. Subtitle (cream, up to 2 lines).
   if (params.subtitle.trim()) {
+    const subtitleSize = overrides.subtitle?.fontSize ?? 32;
+    cursorY += ascent(subtitleSize);
     ctx.fillStyle = CREAM;
-    ctx.font = `600 32px "${FONT_SANS}"`;
+    ctx.font = `600 ${subtitleSize}px "${FONT_SANS}"`;
     const subtitleLines = wrapWithExplicitBreaks(ctx, params.subtitle.trim().toUpperCase(), contentWidth, 2);
+    const subtitleX = MARGIN + (overrides.subtitle?.offsetX ?? 0);
+    const subtitleYOffset = overrides.subtitle?.offsetY ?? 0;
     for (const line of subtitleLines) {
-      ctx.fillText(line, MARGIN, cursorY);
-      cursorY += 38;
+      ctx.fillText(line, subtitleX, cursorY + subtitleYOffset);
+      cursorY += subtitleSize * 1.18;
     }
   }
 
-  // 6. Headline -- auto-fit, anchored to the bottom of its reserved
-  // region so a shorter headline sits lower (matching the reference),
-  // and a longer one grows upward without colliding with the subtitle.
+  // 6. Headline -- auto-fit (or a manual font-size override), anchored to
+  // the bottom of its reserved region so a shorter headline sits lower
+  // (matching the reference), and a longer one grows upward without
+  // colliding with the subtitle.
   const creditY = BANNER_HEIGHT - 40;
   const headlineBottom = creditY - 56;
   if (params.headline.trim()) {
     ctx.fillStyle = CREAM;
-    const { fontSize, lines } = fitHeadline(ctx, params.headline.trim().toUpperCase(), contentWidth, 3, 96, 52, 800);
+    const headlineText = params.headline.trim().toUpperCase();
+    let fontSize: number;
+    let lines: string[];
+    if (overrides.headline?.fontSize) {
+      fontSize = overrides.headline.fontSize;
+      ctx.font = `800 ${fontSize}px "${FONT_DISPLAY}"`;
+      lines = wrapText(ctx, headlineText, contentWidth);
+    } else {
+      ({ fontSize, lines } = fitHeadline(ctx, headlineText, contentWidth, 3, 96, 52, 800));
+    }
     ctx.font = `800 ${fontSize}px "${FONT_DISPLAY}"`;
     const lineHeight = fontSize * 1.04;
-    let y = headlineBottom - (lines.length - 1) * lineHeight;
+    const headlineX = MARGIN + (overrides.headline?.offsetX ?? 0);
+    let y = headlineBottom - (lines.length - 1) * lineHeight + (overrides.headline?.offsetY ?? 0);
     for (const line of lines) {
-      ctx.fillText(line, MARGIN, y);
+      ctx.fillText(line, headlineX, y);
       y += lineHeight;
     }
   }
@@ -332,9 +426,10 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
   // produced from the approved reference file (circular badge, embedded
   // "THE RESERVE" wordmark, separate gold accent dot, all baked into the
   // asset's own pixels) -- never recreated with text or shapes.
-  const logoSize = 84;
-  const logoX = BANNER_WIDTH - MARGIN - logoSize;
-  const logoY = creditY - logoSize + 12;
+  // `fontSize` doubles as the logo's edge length here (no font involved).
+  const logoSize = overrides.logo?.fontSize ?? 84;
+  const logoX = BANNER_WIDTH - MARGIN - logoSize + (overrides.logo?.offsetX ?? 0);
+  const logoY = creditY - logoSize + 12 + (overrides.logo?.offsetY ?? 0);
   ctx.drawImage(logoImg, logoX, logoY, logoSize, logoSize);
 }
 

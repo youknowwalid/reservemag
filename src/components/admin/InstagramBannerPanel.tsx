@@ -1,22 +1,31 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Loader2, ImageIcon, UploadCloud, Download, CheckCircle2, XCircle } from 'lucide-react';
+import { Loader2, ImageIcon, UploadCloud, Download, CheckCircle2, XCircle, RotateCcw } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { renderInstagramBanner, canvasToPngBlob, BANNER_WIDTH, BANNER_HEIGHT } from '../../lib/instagramBannerRenderer';
+import {
+  renderInstagramBanner,
+  canvasToPngBlob,
+  BANNER_WIDTH,
+  BANNER_HEIGHT,
+  type InstagramBannerOverrides,
+  type ElementOverride,
+} from '../../lib/instagramBannerRenderer';
 import FocalPointEditor from './shared/FocalPointEditor';
 
 // Instagram Banner Automation -- manual, on-demand step run from a
 // finished editorial generation's result. Prefills THE RESERVE's fixed
 // banner template (see instagramBannerRenderer.ts -- the layout itself is
-// not editable here, only its text/image inputs are) from the editorial
-// package, lets the admin adjust those inputs, renders a live preview in
-// the browser via <canvas>, and on request uploads the result to the
-// `media` storage bucket and records its URL on the generation's row.
+// not editable here, only its text/image inputs and the four adjustable
+// elements below are) from the editorial package, lets the admin adjust
+// those inputs, renders a live preview in the browser via <canvas>, and
+// on request uploads the result to the `media` storage bucket and
+// records its URL + full render configuration on the generation's row so
+// reopening it later restores the exact same manual layout.
 //
 // No AI request of any kind happens in this component -- rendering is
 // pure client-side canvas drawing, and the only network calls are the
 // admin-gated image proxy (to load the source photo without tainting the
-// canvas -- see server.ts's /api/admin/image-proxy) and the Supabase
-// Storage upload.
+// canvas -- see server.ts's /api/admin/image-proxy), the Supabase
+// Storage upload, and reading/writing this generation's saved config.
 
 interface SourceSummary {
   sourceId: string;
@@ -38,6 +47,93 @@ interface InstagramBannerPanelProps {
   sources: SourceSummary[];
 }
 
+const EMPTY_OVERRIDE: ElementOverride = { fontSize: undefined, offsetX: 0, offsetY: 0 };
+const DEFAULT_OVERRIDES: Required<InstagramBannerOverrides> = {
+  kicker: EMPTY_OVERRIDE,
+  subtitle: EMPTY_OVERRIDE,
+  headline: EMPTY_OVERRIDE,
+  logo: EMPTY_OVERRIDE,
+};
+
+/** What gets saved to editorial_generations.instagram_banner_config -- everything needed to reproduce this exact banner on reopen, not just the resulting image. */
+interface SavedBannerConfig {
+  kicker: string;
+  subtitle: string;
+  headline: string;
+  creditLine: string;
+  imageUrl: string;
+  focalX: number;
+  focalY: number;
+  overrides: Required<InstagramBannerOverrides>;
+}
+
+/** One row in the manual adjustment panel: a font-size stepper, X/Y nudge inputs, and a "Reset to auto" button. Position is a numeric nudge rather than drag-on-canvas -- see the header comment on the "Manual Adjustments" section below for why. */
+function ElementAdjustRow({
+  label,
+  value,
+  onChange,
+  autoFontSizeLabel,
+  minFontSize,
+  maxFontSize,
+}: {
+  label: string;
+  value: ElementOverride;
+  onChange: (next: ElementOverride) => void;
+  autoFontSizeLabel: string;
+  minFontSize: number;
+  maxFontSize: number;
+}) {
+  const isAuto = value.fontSize === undefined;
+  return (
+    <div className="space-y-2 bg-black/30 border border-white/5 p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-[9px] uppercase tracking-widest text-zinc-400 font-bold">{label}</span>
+        <button
+          onClick={() => onChange(EMPTY_OVERRIDE)}
+          disabled={isAuto && value.offsetX === 0 && value.offsetY === 0}
+          className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-reserve-accent hover:text-white disabled:opacity-30 disabled:cursor-default"
+        >
+          <RotateCcw size={10} /> Reset to Auto
+        </button>
+      </div>
+      <div className="grid grid-cols-3 gap-2 items-center">
+        <div className="col-span-3 flex items-center gap-2">
+          <span className="text-[9px] text-zinc-600 w-16 shrink-0">Font size</span>
+          <input
+            type="range"
+            min={minFontSize}
+            max={maxFontSize}
+            step={1}
+            value={value.fontSize ?? (minFontSize + maxFontSize) / 2}
+            onChange={(e) => onChange({ ...value, fontSize: parseInt(e.target.value, 10) })}
+            className="flex-1 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-reserve-accent"
+          />
+          <span className="text-[9px] text-zinc-500 font-mono w-16 text-right">{isAuto ? autoFontSizeLabel : `${value.fontSize}px`}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="text-[9px] text-zinc-600">X</span>
+          <input
+            type="number"
+            value={value.offsetX}
+            onChange={(e) => onChange({ ...value, offsetX: parseInt(e.target.value, 10) || 0 })}
+            className="w-full bg-black border border-white/10 p-1.5 text-[10px] font-mono"
+          />
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="text-[9px] text-zinc-600">Y</span>
+          <input
+            type="number"
+            value={value.offsetY}
+            onChange={(e) => onChange({ ...value, offsetY: parseInt(e.target.value, 10) || 0 })}
+            className="w-full bg-black border border-white/10 p-1.5 text-[10px] font-mono"
+          />
+        </div>
+        <div className="text-[9px] text-zinc-600">px nudge</div>
+      </div>
+    </div>
+  );
+}
+
 export default function InstagramBannerPanel({ generationId, editorialPackage, sources }: InstagramBannerPanelProps) {
   const [expanded, setExpanded] = useState(false);
   const [kicker, setKicker] = useState(editorialPackage.coverKicker);
@@ -55,12 +151,19 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
     const publisher = sources.find((s) => s.status === 'SUCCESS')?.publisher;
     return publisher ? `COURTESY: ${publisher.toUpperCase()}` : 'COURTESY: THE RESERVE';
   });
+  // Manual per-element adjustments (kicker/subtitle/headline/logo -- never
+  // the masthead, which stays auto-fixed per the fixed template). Loaded
+  // from a saved config on mount if one exists (see the effect below), so
+  // reopening a previously-adjusted banner keeps its manual layout
+  // instead of reverting to auto.
+  const [overrides, setOverrides] = useState<Required<InstagramBannerOverrides>>(DEFAULT_OVERRIDES);
 
   const [rendering, setRendering] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [hasPreview, setHasPreview] = useState(false);
+  const [loadedSavedConfig, setLoadedSavedConfig] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -71,6 +174,42 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
     },
     [],
   );
+
+  // Restore a previously-saved manual layout, if this generation has one.
+  // Only ever reads -- never writes here; saving happens explicitly via
+  // "Upload to Media Library" (see uploadToMediaLibrary below).
+  useEffect(() => {
+    if (!generationId) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error: fetchError } = await supabase
+        .from('editorial_generations')
+        .select('instagram_banner_config')
+        .eq('id', generationId)
+        .maybeSingle();
+      if (cancelled || fetchError || !data?.instagram_banner_config) return;
+      const saved = data.instagram_banner_config as SavedBannerConfig;
+      setKicker(saved.kicker ?? kicker);
+      setSubtitle(saved.subtitle ?? subtitle);
+      setHeadline(saved.headline ?? headline);
+      setCreditLine(saved.creditLine ?? creditLine);
+      setImageUrl(saved.imageUrl ?? imageUrl);
+      setFocalX(saved.focalX ?? 50);
+      setFocalY(saved.focalY ?? 50);
+      setOverrides(saved.overrides ?? DEFAULT_OVERRIDES);
+      setLoadedSavedConfig(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally runs once per generationId, not on every field edit
+  }, [generationId]);
+
+  const renderFromSrc = async (imageSrc: string) => {
+    const canvas = canvasRef.current;
+    if (!canvas) throw new Error('Canvas is not ready.');
+    await renderInstagramBanner(canvas, { imageSrc, kicker, subtitle, headline, creditLine, focalX, focalY, overrides });
+  };
 
   const renderPreview = async () => {
     if (!imageUrl.trim()) {
@@ -101,9 +240,7 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
       const objectUrl = URL.createObjectURL(blob);
       objectUrlRef.current = objectUrl;
 
-      const canvas = canvasRef.current;
-      if (!canvas) throw new Error('Canvas is not ready.');
-      await renderInstagramBanner(canvas, { imageSrc: objectUrl, kicker, subtitle, headline, creditLine, focalX, focalY });
+      await renderFromSrc(objectUrl);
       setHasPreview(true);
     } catch (err: any) {
       setError(err?.message || 'Failed to render the banner preview.');
@@ -112,6 +249,17 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
       setRendering(false);
     }
   };
+
+  // Live preview: once an image has been fetched at least once (hasPreview
+  // + a cached object URL), any text/focal/manual-adjustment change
+  // redraws instantly from that cached image -- no server round-trip, no
+  // re-fetch through the image proxy. Only a changed Image URL needs the
+  // explicit "Render Preview" button again (a genuinely new fetch).
+  useEffect(() => {
+    if (!hasPreview || !objectUrlRef.current) return;
+    renderFromSrc(objectUrlRef.current).catch((err) => setError(err?.message || 'Failed to update the preview.'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- renderFromSrc closes over the latest state already; re-running on those same state changes is the point
+  }, [kicker, subtitle, headline, creditLine, focalX, focalY, overrides, hasPreview]);
 
   const downloadPng = async () => {
     const canvas = canvasRef.current;
@@ -147,14 +295,15 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
       const publicUrl = data.publicUrl;
 
       if (generationId) {
+        const config: SavedBannerConfig = { kicker, subtitle, headline, creditLine, imageUrl, focalX, focalY, overrides };
         const { error: dbError } = await supabase
           .from('editorial_generations')
-          .update({ instagram_banner_url: publicUrl })
+          .update({ instagram_banner_url: publicUrl, instagram_banner_config: config })
           .eq('id', generationId);
         // The banner itself uploaded fine even if this fails -- surface it
         // as a visible (but non-fatal) note rather than silently losing
         // the association, mirroring mediaService.uploadFile's pattern.
-        if (dbError) console.error('Instagram banner uploaded, but failed to record its URL on the generation row:', dbError);
+        if (dbError) console.error('Instagram banner uploaded, but failed to record its URL/config on the generation row:', dbError);
       }
 
       setUploadedUrl(publicUrl);
@@ -179,7 +328,9 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
   return (
     <div className="space-y-4 bg-black/40 border border-white/5 p-6">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] uppercase tracking-widest text-zinc-500">Instagram Banner -- THE RESERVE template</span>
+        <span className="text-[10px] uppercase tracking-widest text-zinc-500">
+          Instagram Banner -- THE RESERVE template{loadedSavedConfig ? ' (restored saved layout)' : ''}
+        </span>
         <button onClick={() => setExpanded(false)} className="text-zinc-500 hover:text-white text-[10px] uppercase tracking-widest">
           Collapse
         </button>
@@ -268,6 +419,60 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
         </div>
       </div>
 
+      {/* Manual per-element adjustments -- font size + a numeric X/Y pixel
+          nudge per element, not drag-directly-on-canvas. The crop/focal-
+          point editor's drag pattern (reused above) operates on a single
+          whole-image region; dragging four independently-selectable,
+          overlapping TEXT elements on the actual rendered canvas would
+          need real hit-testing and a selection model that doesn't exist
+          anywhere in this codebase yet, so per the task's own fallback
+          allowance, this uses numeric nudges instead. The live canvas
+          preview above updates instantly as these change (see the effect
+          above), so the effect of every adjustment is still immediately
+          visible -- just not via direct manipulation of the canvas
+          itself. The masthead ("THE"/"RESERVE") is intentionally not
+          included here -- it stays auto-fixed once its fit-to-width
+          sizing is correct. */}
+      {imageUrl.trim() && (
+        <div className="pt-6 border-t border-white/5 space-y-3">
+          <span className="text-[10px] uppercase tracking-widest text-zinc-500 block">Manual Adjustments</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <ElementAdjustRow
+              label="Kicker"
+              value={overrides.kicker}
+              onChange={(next) => setOverrides((prev) => ({ ...prev, kicker: next }))}
+              autoFontSizeLabel="Auto (28px)"
+              minFontSize={16}
+              maxFontSize={48}
+            />
+            <ElementAdjustRow
+              label="Subtitle"
+              value={overrides.subtitle}
+              onChange={(next) => setOverrides((prev) => ({ ...prev, subtitle: next }))}
+              autoFontSizeLabel="Auto (32px)"
+              minFontSize={18}
+              maxFontSize={52}
+            />
+            <ElementAdjustRow
+              label="Headline"
+              value={overrides.headline}
+              onChange={(next) => setOverrides((prev) => ({ ...prev, headline: next }))}
+              autoFontSizeLabel="Auto (fit)"
+              minFontSize={36}
+              maxFontSize={120}
+            />
+            <ElementAdjustRow
+              label="Logo"
+              value={overrides.logo}
+              onChange={(next) => setOverrides((prev) => ({ ...prev, logo: next }))}
+              autoFontSizeLabel="Auto (84px)"
+              minFontSize={40}
+              maxFontSize={160}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Crop/focal-point editor -- the shared component also used by the
           article editor's mobile hero crop tool (StoriesSection.tsx),
           here in full 2D mode since the banner's fixed 1080x1350 frame
@@ -275,10 +480,9 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
           uses the image URL directly (a plain <img> can display a
           cross-origin image fine -- only canvas export needs the
           proxy), so it gives instant feedback without waiting on a
-          fetch. Adjust here, then (re-)render to bake it into the
-          canvas -- matching how the article editor's crop tool works
-          (set position, then save), not a live-redraw-on-every-drag
-          canvas. */}
+          fetch. Once a preview has been rendered, focal-point changes
+          also live-update the actual canvas above (see the effect
+          above). */}
       {imageUrl.trim() && (
         <div className="pt-6 border-t border-white/5">
           <FocalPointEditor
@@ -292,7 +496,7 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
               setFocalY(y);
             }}
             title="Banner Focal Point"
-            helpText="Define the focal point for the banner's fixed frame, then re-render to apply it."
+            helpText="Define the focal point for the banner's fixed frame."
           />
         </div>
       )}
