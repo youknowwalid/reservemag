@@ -4,25 +4,47 @@
 // already retrieved by sourceRetrievalService.ts, which keeps this module
 // easy to unit-test with fixture HTML strings.
 //
-// Primary extraction is Mozilla's Readability algorithm (the engine behind
-// Firefox Reader View) run against a JSDOM document -- chosen over a
-// hand-rolled heuristic because it's a production-proven library that
-// already handles the huge variety of real-world article markup, and it
-// is not a browser-automation tool (no script execution, no navigation,
-// pure DOM parsing). A simple paragraph-density heuristic is kept as a
-// fallback for the pages Readability can't parse.
+// Pure cheerio -- no jsdom, no @mozilla/readability. This module
+// previously ran Mozilla's Readability algorithm against a JSDOM
+// document. That was removed as a production incident fix: jsdom's
+// `html-encoding-sniffer` dependency (>=6.0.0) requires `@exodus/bytes`,
+// which ships ESM-only, via a plain CommonJS `require()` -- an upstream
+// packaging bug (verified directly: html-encoding-sniffer's own
+// package.json has no `"type": "module"`, yet its lib file does
+// `require("@exodus/bytes/encoding-lite.js")`, and @exodus/bytes's
+// package.json declares `"type": "module"`). Because esbuild bundles this
+// server with `--packages=external`, that broken `require()` chain is
+// resolved fresh from node_modules on every cold start, and Node's
+// ERR_REQUIRE_ESM crashes the entire process -- not just source
+// retrieval, every route -- the moment the bundle loads. Pinning an older
+// html-encoding-sniffer would only be papering over a real incompatibility
+// jsdom itself doesn't control, and jsdom's own dependency range doesn't
+// allow avoiding it. Rather than reach for a different DOM-emulation
+// library with its own unvetted dependency tree during an active outage,
+// this rewrite drops the DOM-emulation approach entirely: cheerio (already
+// a proven, working dependency elsewhere in this codebase) is sufficient
+// for structural HTML scoring, which is all article extraction actually
+// needs -- it never required layout/rendering/script execution.
+//
+// The extraction below scores every plausible content container
+// (article/main/section/div/td) using signals adapted from Readability's
+// approach: tag weight, positive/negative class-and-id keywords, comma
+// count and text length as prose indicators, a link-density penalty (to
+// reject navigation/link-list blocks), and a paragraph-to-total-text
+// ratio (to prefer tightly-scoped containers over broad ones that merely
+// contain the article alongside other page chrome). If nothing scores
+// above the disqualification floor, a simpler "largest cumulative
+// paragraph text" fallback guarantees a result rather than an outright
+// failure.
 
 import * as cheerio from 'cheerio';
 import type { CheerioAPI } from 'cheerio';
-import { JSDOM } from 'jsdom';
-import { Readability } from '@mozilla/readability';
 import type { RawPageMetadata } from './sourceMetadata';
 import { findJsonLdByType, jsonLdImageUrl } from './sourceMetadata';
 import type { SourceHeading, SourceImageCandidate, SourceImageKind } from './sourceTypes';
 
 // Chrome/boilerplate that is never part of the article body. Stripped
-// before Readability runs (cuts noise out of its scoring on template-heavy
-// pages) and before the heuristic fallback scans for content.
+// before scoring/extraction runs.
 const BOILERPLATE_SELECTORS = [
   'nav',
   'header',
@@ -87,8 +109,8 @@ export interface CleanedArticle {
   articleHtml: string;
   headings: SourceHeading[];
   wordCount: number;
-  /** False when Readability couldn't parse the page and the density-heuristic fallback ran instead. */
-  usedReadability: boolean;
+  /** False when nothing cleared the scoring floor and the guaranteed density-only fallback ran instead. */
+  usedScoredExtraction: boolean;
 }
 
 export interface NormalizedContent {
@@ -139,28 +161,131 @@ function paragraphsFromHtml($: CheerioAPI): string[] {
     .filter((t) => t.length > 0);
 }
 
-function heuristicExtract($: CheerioAPI): CleanedArticle {
-  // Density heuristic: the container with the most cumulative <p> text is
-  // treated as the article body. A blunt instrument, but a reasonable
-  // fallback for the minority of pages Readability can't handle.
-  let bestEl: ReturnType<CheerioAPI> | null = null;
-  let bestScore = 0;
+// --- Scored extraction -------------------------------------------------
 
+const POSITIVE_CLASS_ID_PATTERN = /article|articlebody|story-?body|[^a-z](body|content|entry|main|page|post|story|text|blog)[^a-z]?/i;
+const NEGATIVE_CLASS_ID_PATTERN =
+  /sidebar|footer|footnote|comment|widget|related|share|social|nav(igation)?|menu|advert|banner|promo|newsletter|cookie|popup|masthead|breadcrumb|pagination|taglist|tag-list|byline|caption|subscribe|sponsor/i;
+const CANDIDATE_SELECTOR = 'article, main, section, div, td';
+const MIN_CANDIDATE_TEXT_LENGTH = 40;
+
+function tagBaseScore(tagName: string): number {
+  switch (tagName) {
+    case 'article':
+      return 25;
+    case 'main':
+      return 20;
+    case 'section':
+      return 8;
+    case 'div':
+      return 5;
+    case 'td':
+      return 3;
+    default:
+      return 0;
+  }
+}
+
+function linkDensity($: CheerioAPI, el: any): number {
+  const totalLength = $(el).text().length;
+  if (totalLength === 0) return 0;
+  let linkLength = 0;
+  $(el)
+    .find('a')
+    .each((_, a) => {
+      linkLength += $(a).text().length;
+    });
+  return linkLength / totalLength;
+}
+
+function scoreElement($: CheerioAPI, el: any): number {
+  const tagName = ($(el).prop('tagName') || '').toLowerCase();
+  const attrString = `${$(el).attr('class') || ''} ${$(el).attr('id') || ''}`;
+
+  const paragraphs = $(el).find('p, pre, blockquote');
+  const paragraphText = paragraphs
+    .map((_, p) => $(p).text())
+    .get()
+    .join(' ');
+  if (paragraphText.trim().length < MIN_CANDIDATE_TEXT_LENGTH) return -Infinity;
+
+  let score = tagBaseScore(tagName);
+  if (POSITIVE_CLASS_ID_PATTERN.test(attrString)) score += 25;
+  if (NEGATIVE_CLASS_ID_PATTERN.test(attrString)) score -= 50;
+
+  const commas = (paragraphText.match(/,/g) || []).length;
+  let contentScore = Math.min(commas * 2, 40) + Math.min(Math.floor(paragraphText.length / 50), 60);
+
+  // Link-density penalty -- a block that's mostly link text is a
+  // navigation/related-links list, not article prose.
+  contentScore *= Math.max(0, 1 - linkDensity($, el) * 1.5);
+
+  // Paragraph-to-total-text ratio -- dampens (but doesn't zero out) broad
+  // containers that hold the article alongside other page chrome the
+  // boilerplate strip didn't catch, favoring tightly-scoped candidates.
+  const totalTextLength = $(el).text().length || 1;
+  const paragraphRatio = Math.min(paragraphText.length / totalTextLength, 1);
+  contentScore *= 0.5 + 0.5 * paragraphRatio;
+
+  return score + contentScore;
+}
+
+function scoredCandidate($: CheerioAPI): any | null {
+  let best: { el: any; score: number } | null = null;
+  $(CANDIDATE_SELECTOR).each((_, el) => {
+    const score = scoreElement($, el);
+    if (score === -Infinity) return;
+    if (!best || score > best.score) best = { el, score };
+  });
+  return best ? (best as { el: any; score: number }).el : null;
+}
+
+/** Guaranteed fallback: the container with the most cumulative <p> text, no scoring/disqualification. Used only when scoredCandidate() finds nothing. */
+function densityOnlyCandidate($: CheerioAPI): any {
+  let bestEl: any = null;
+  let bestScore = 0;
   $('article, main, [role="main"], div, section').each((_, el) => {
-    const $el = $(el);
-    const text = $el
+    const text = $(el)
       .find('p')
       .map((_, p) => $(p).text())
       .get()
       .join(' ');
     if (text.length > bestScore) {
       bestScore = text.length;
-      bestEl = $el;
+      bestEl = el;
     }
   });
+  return bestEl;
+}
 
-  const $container = bestEl ?? $('body');
-  const paragraphs = dedupeParagraphs(paragraphsFromHtml(cheerio.load($container.html() || '')));
+/**
+ * Extracts the readable article body from a raw HTML page. Never throws --
+ * an unusual page structure falls back to the guaranteed density-only
+ * heuristic rather than failing the whole retrieval.
+ */
+export function extractCleanArticle(html: string, _pageUrl: string): CleanedArticle {
+  const $ = cheerio.load(html);
+  $(BOILERPLATE_SELECTORS).remove();
+
+  let container: any = null;
+  let usedScoredExtraction = false;
+  try {
+    container = scoredCandidate($);
+    if (container) usedScoredExtraction = true;
+  } catch {
+    container = null;
+  }
+  if (!container) container = densityOnlyCandidate($);
+
+  const $container = container ? $(container) : $('body');
+  const containerHtml = $container.html() || '';
+  // Re-load the container's HTML as its own document so extractHeadings
+  // (and paragraph extraction) get a real CheerioAPI to query against --
+  // a Cheerio *selection* (like $container) is not itself queryable the
+  // way the root $ is, so it must never be passed where a CheerioAPI is
+  // expected.
+  const $containerDoc = cheerio.load(containerHtml);
+  const paragraphs = dedupeParagraphs(paragraphsFromHtml($containerDoc));
   const articleText = paragraphs.join('\n\n');
 
   return {
@@ -168,64 +293,10 @@ function heuristicExtract($: CheerioAPI): CleanedArticle {
     byline: null,
     excerpt: null,
     articleText,
-    articleHtml: $container.html() || '',
-    headings: extractHeadings($container as unknown as CheerioAPI),
+    articleHtml: containerHtml,
+    headings: extractHeadings($containerDoc),
     wordCount: countWords(articleText),
-    usedReadability: false,
-  };
-}
-
-/**
- * Extracts the readable article body from a raw HTML page. Never throws --
- * a Readability/JSDOM failure (malformed markup, no recognizable article,
- * etc.) falls back to the density heuristic rather than failing the whole
- * retrieval.
- */
-export function extractCleanArticle(html: string, pageUrl: string): CleanedArticle {
-  const $pre = cheerio.load(html);
-  $pre(BOILERPLATE_SELECTORS).remove();
-  const prunedHtml = $pre.html() || html;
-
-  let parsed: { title: string | null; byline: string | null; excerpt: string | null; content: string | null; textContent: string } | null = null;
-  try {
-    const dom = new JSDOM(prunedHtml, { url: pageUrl });
-    const article = new Readability(dom.window.document, { charThreshold: 200 }).parse();
-    if (article?.textContent && article.textContent.trim().length > 200) {
-      parsed = {
-        title: article.title?.trim() || null,
-        byline: article.byline?.trim() || null,
-        excerpt: article.excerpt?.trim() || null,
-        content: article.content ?? null,
-        textContent: article.textContent,
-      };
-    }
-  } catch {
-    parsed = null; // fall through to the heuristic below
-  }
-
-  if (!parsed) return heuristicExtract($pre);
-
-  const $content = cheerio.load(parsed.content || '');
-  const fromHtml = dedupeParagraphs(paragraphsFromHtml($content));
-  const articleText =
-    fromHtml.length > 0
-      ? fromHtml.join('\n\n')
-      : dedupeParagraphs(
-          parsed.textContent
-            .split(/\n{2,}/)
-            .map((block) => block.replace(/\s+/g, ' ').trim())
-            .filter(Boolean),
-        ).join('\n\n');
-
-  return {
-    title: parsed.title,
-    byline: parsed.byline,
-    excerpt: parsed.excerpt,
-    articleText,
-    articleHtml: parsed.content || '',
-    headings: extractHeadings($content),
-    wordCount: countWords(articleText),
-    usedReadability: true,
+    usedScoredExtraction,
   };
 }
 

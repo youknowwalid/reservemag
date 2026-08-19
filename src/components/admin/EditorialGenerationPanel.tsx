@@ -51,6 +51,44 @@ interface GenerationResult {
   latencyMs: number | null;
 }
 
+/**
+ * Safely reads the /api/admin/editorial/generate response. Every code path
+ * inside that route replies with JSON (see server.ts), but the response can
+ * still arrive as something else entirely if it never reaches the route
+ * handler at all -- e.g. a platform-level crash page (HTML), a proxy
+ * timeout (plain text), or a gateway error. Calling res.json() directly on
+ * those throws a raw "Unexpected token '<'... is not valid JSON"
+ * SyntaxError straight into the UI, which is neither useful nor safe (an
+ * HTML error page can contain fragments of a stack trace). This reads the
+ * body as text exactly once, tries to parse it as JSON regardless of the
+ * declared content-type (some proxies mislabel it), and otherwise falls
+ * back to a clean, generic, human-readable message. The raw body is only
+ * ever logged to the browser console (a developer surface) -- never
+ * rendered on screen -- and full diagnostics for the actual failure live
+ * server-side, in the platform's function logs.
+ */
+async function parseEditorialResponse(res: Response): Promise<{ ok: true; data: any } | { ok: false; message: string }> {
+  const raw = await res.text();
+
+  try {
+    return { ok: true, data: JSON.parse(raw) };
+  } catch {
+    console.error('Editorial generation: non-JSON response from server.', {
+      status: res.status,
+      contentType: res.headers.get('content-type'),
+      raw: raw.slice(0, 2000),
+    });
+    if (res.status >= 500) {
+      return {
+        ok: false,
+        message:
+          'The server encountered an unexpected error and did not complete the request. This does not confirm whether an AI generation was attempted -- check the Editorial Factory history before retrying, to avoid an unintended duplicate request.',
+      };
+    }
+    return { ok: false, message: `The server returned an unexpected response (HTTP ${res.status}). Please try again, or contact an administrator if this persists.` };
+  }
+}
+
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="space-y-1">
@@ -111,7 +149,9 @@ export default function EditorialGenerationPanel() {
           confirmed: true,
         }),
       });
-      const data = await res.json();
+      const parsed = await parseEditorialResponse(res);
+      if (parsed.ok === false) throw new Error(parsed.message);
+      const data = parsed.data;
       if (!res.ok && !data?.status) throw new Error(data?.error || 'Editorial generation failed.');
 
       setResult(data);
