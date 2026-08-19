@@ -84,7 +84,7 @@ async function main() {
   {
     console.log('\n=== TEST 4: poor HTML (direct cleaner test) ===');
     const cleaned = extractCleanArticle(POOR_HTML_FIXTURE, 'https://example.com/broken-page');
-    console.log('usedReadability:', cleaned.usedReadability);
+    console.log('usedScoredExtraction:', cleaned.usedScoredExtraction);
     console.log('title          :', cleaned.title);
     console.log('wordCount      :', cleaned.wordCount);
     console.log('articleText    :', cleaned.articleText.slice(0, 200));
