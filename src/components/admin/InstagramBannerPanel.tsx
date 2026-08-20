@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Loader2, ImageIcon, UploadCloud, Download, CheckCircle2, XCircle, RotateCcw, Send } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { instagramPublishService } from '../../services/instagramPublishService';
+import { bannerUploadService } from '../../services/bannerUploadService';
 import {
   renderInstagramBanner,
   canvasToPngBlob,
@@ -23,20 +24,24 @@ import FocalPointEditor from './shared/FocalPointEditor';
 // layout itself is not editable here, only its text/image inputs and the
 // four adjustable elements below are) from whichever caller's package,
 // lets the admin adjust those inputs, renders a live preview in the
-// browser via <canvas>, and on request uploads the result to the `media`
-// storage bucket and records its URL + full render configuration + Instagram
-// publish status on `recordTable`'s row (either an editorial_generations
-// row or an articles row -- both carry identical instagram_banner_url /
-// instagram_banner_config / instagram_media_id / instagram_published_at
-// columns for exactly this reason) so reopening it later restores the
-// exact same manual layout and shows whether it's already been posted.
+// browser via <canvas>, and on request uploads the result to Cloudflare
+// R2 (see src/services/r2StorageService.ts + bannerUploadService.ts --
+// R2 is used for this ONE upload only; every DB record still lives in
+// Supabase) and records its public R2 URL + full render configuration +
+// Instagram publish status on `recordTable`'s row (either an
+// editorial_generations row or an articles row -- both carry identical
+// instagram_banner_url / instagram_banner_config / instagram_media_id /
+// instagram_published_at columns for exactly this reason) so reopening
+// it later restores the exact same manual layout and shows whether it's
+// already been posted.
 //
 // No AI request of any kind happens in this component -- rendering is
 // pure client-side canvas drawing, and the only network calls are the
 // admin-gated image proxy (to load the source photo without tainting the
-// canvas -- see server.ts's /api/admin/image-proxy), the Supabase
-// Storage upload, the Instagram publish route, and reading/writing
-// recordTable's saved config + publish status.
+// canvas -- see server.ts's /api/admin/image-proxy), the R2 banner
+// upload, the Instagram publish route, and reading/writing recordTable's
+// saved config + publish status (all three of those last reads/writes
+// stay on Supabase).
 
 interface SourceSummary {
   sourceId: string;
@@ -201,7 +206,7 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [hasPreview, setHasPreview] = useState(false);
   // Instagram Content Publishing -- only enabled once the banner has been
-  // uploaded to the Media Library (uploadedUrl set), since the Graph API's
+  // uploaded (uploadedUrl set, the R2 public URL), since the Graph API's
   // /media endpoint requires a publicly-fetchable image_url, not a raw
   // file. Caption is seeded from the editorial headline once and then
   // freely editable -- never re-synced on later headline/kicker edits, so
@@ -244,8 +249,8 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
 
   // Restore a previously-saved manual layout and publish status, if this
   // record has one. Only ever reads -- never writes here; saving happens
-  // explicitly via "Upload to Media Library" (banner/config) and
-  // "Publish to Instagram" (media id/published-at) below.
+  // explicitly via "Upload Banner" (R2 URL + config) and "Publish to
+  // Instagram" (media id/published-at) below.
   useEffect(() => {
     if (!recordId) return;
     let cancelled = false;
@@ -370,7 +375,7 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
     URL.revokeObjectURL(url);
   };
 
-  const uploadToMediaLibrary = async () => {
+  const uploadBanner = async () => {
     const canvas = canvasRef.current;
     if (!canvas || !hasPreview) {
       setError('Render a preview before uploading.');
@@ -385,16 +390,11 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
     setPublishError(null);
     try {
       const blob = await canvasToPngBlob(canvas);
-      const storagePath = `instagram-banners/${recordId || 'untracked'}-${Date.now()}.png`;
-
-      const { error: uploadError } = await supabase.storage.from('media').upload(storagePath, blob, {
-        contentType: 'image/png',
-        upsert: false,
-      });
-      if (uploadError) throw uploadError;
-
-      const { data } = supabase.storage.from('media').getPublicUrl(storagePath);
-      const publicUrl = data.publicUrl;
+      // Bytes go to Cloudflare R2 (server-side, via
+      // /api/admin/instagram-banner-upload -- see bannerUploadService.ts)
+      // rather than Supabase Storage. The record of that upload (URL +
+      // config) still goes to Supabase below, unchanged.
+      const publicUrl = await bannerUploadService.uploadRenderedBanner(blob, recordId);
 
       if (recordId) {
         const config: SavedBannerConfig = { kicker, subtitle, headline, creditLine, imageUrl, focalX, focalY, overrides };
@@ -418,7 +418,7 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
 
   const publishToInstagram = async () => {
     if (!uploadedUrl) {
-      setPublishError('Upload the banner to the Media Library first -- Instagram needs a public image URL.');
+      setPublishError('Upload the banner first -- Instagram needs a public image URL.');
       return;
     }
     if (!caption.trim()) {
@@ -521,12 +521,12 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
               <Download size={14} /> Download PNG
             </button>
             <button
-              onClick={uploadToMediaLibrary}
+              onClick={uploadBanner}
               disabled={!hasPreview || uploading}
               className="px-6 py-3 border border-white/10 text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-white/5 transition-all disabled:opacity-30"
             >
               {uploading ? <Loader2 className="animate-spin" size={14} /> : <UploadCloud size={14} />}
-              Upload to Media Library
+              Upload Banner
             </button>
           </div>
 
@@ -578,7 +578,7 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
             <button
               onClick={publishToInstagram}
               disabled={!uploadedUrl || publishing}
-              title={!uploadedUrl ? 'Upload to the Media Library first' : undefined}
+              title={!uploadedUrl ? 'Upload the banner first' : undefined}
               className="px-6 py-3 bg-reserve-accent text-black text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:opacity-90 transition-all disabled:opacity-30 disabled:cursor-default"
             >
               {publishing ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}
