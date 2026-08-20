@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Loader2, ImageIcon, UploadCloud, Download, CheckCircle2, XCircle, RotateCcw } from 'lucide-react';
+import { Loader2, ImageIcon, UploadCloud, Download, CheckCircle2, XCircle, RotateCcw, Send } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { instagramPublishService } from '../../services/instagramPublishService';
 import {
   renderInstagramBanner,
   canvasToPngBlob,
@@ -165,6 +166,16 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
   const [error, setError] = useState<string | null>(null);
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [hasPreview, setHasPreview] = useState(false);
+  // Instagram Content Publishing -- only enabled once the banner has been
+  // uploaded to the Media Library (uploadedUrl set), since the Graph API's
+  // /media endpoint requires a publicly-fetchable image_url, not a raw
+  // file. Caption is seeded from the editorial headline once and then
+  // freely editable -- never re-synced on later headline/kicker edits, so
+  // an admin's manual caption tweak is never silently overwritten.
+  const [caption, setCaption] = useState(() => editorialPackage.instagramHeadline || editorialPackage.coverKicker || '');
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [publishResult, setPublishResult] = useState<{ mediaId: string; permalink: string | null } | null>(null);
   const [loadedSavedConfig, setLoadedSavedConfig] = useState(false);
   // Subject-over-text compositing status, purely informational -- the
   // actual fallback-on-failure logic lives in subjectSegmentation.ts
@@ -322,6 +333,11 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
     }
     setError(null);
     setUploading(true);
+    // A fresh upload invalidates any earlier publish result -- it pointed
+    // at a since-replaced image, so leaving it visible would misleadingly
+    // suggest the new banner was already posted.
+    setPublishResult(null);
+    setPublishError(null);
     try {
       const blob = await canvasToPngBlob(canvas);
       const storagePath = `instagram-banners/${generationId || 'untracked'}-${Date.now()}.png`;
@@ -352,6 +368,27 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
       setError(err?.message || 'Failed to upload the banner.');
     } finally {
       setUploading(false);
+    }
+  };
+
+  const publishToInstagram = async () => {
+    if (!uploadedUrl) {
+      setPublishError('Upload the banner to the Media Library first -- Instagram needs a public image URL.');
+      return;
+    }
+    if (!caption.trim()) {
+      setPublishError('A caption is required.');
+      return;
+    }
+    setPublishError(null);
+    setPublishing(true);
+    try {
+      const result = await instagramPublishService.publish(uploadedUrl, caption.trim());
+      setPublishResult(result);
+    } catch (err: any) {
+      setPublishError(err?.message || 'Failed to publish to Instagram.');
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -465,6 +502,48 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
               </a>
             </div>
           )}
+
+          {/* Instagram Content Publishing -- posts the uploaded banner
+              directly to THE RESERVE's connected Instagram account via the
+              Graph API (see server.ts's /api/admin/instagram-publish and
+              src/services/instagramGraphService.ts). Gated on uploadedUrl
+              since the API needs a public image URL, not a canvas blob. */}
+          <div className="pt-4 border-t border-white/5 space-y-3">
+            <label className="text-[9px] uppercase tracking-widest text-zinc-600 block">Instagram caption</label>
+            <textarea
+              className="w-full bg-black border border-white/10 p-3 text-xs"
+              rows={3}
+              value={caption}
+              onChange={(e) => setCaption(e.target.value)}
+              placeholder="Write the caption that will post alongside this banner..."
+            />
+            <button
+              onClick={publishToInstagram}
+              disabled={!uploadedUrl || publishing}
+              title={!uploadedUrl ? 'Upload to the Media Library first' : undefined}
+              className="px-6 py-3 bg-reserve-accent text-black text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:opacity-90 transition-all disabled:opacity-30 disabled:cursor-default"
+            >
+              {publishing ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}
+              Publish to Instagram
+            </button>
+            {publishError && (
+              <div className="flex items-center gap-2 text-rose-500 text-[10px]">
+                <XCircle size={12} className="shrink-0" /> {publishError}
+              </div>
+            )}
+            {publishResult && (
+              <div className="flex items-center gap-2 text-emerald-400 text-[10px] break-all">
+                <CheckCircle2 size={12} className="shrink-0" /> Published --{' '}
+                {publishResult.permalink ? (
+                  <a href={publishResult.permalink} target="_blank" rel="noreferrer" className="underline">
+                    {publishResult.permalink}
+                  </a>
+                ) : (
+                  <span>media id {publishResult.mediaId}</span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex items-start justify-center">

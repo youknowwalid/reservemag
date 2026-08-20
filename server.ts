@@ -30,6 +30,11 @@ import { retrieveSource, safeFetchImage } from './src/services/research/sourceRe
 import { generateEditorialPackage, resolveGenerationTimeoutMs, getConfiguredEditorialModel } from './src/services/editorial/editorialGenerationService';
 import { validateGenerationRequestBody } from './src/services/editorial/editorialRequestGuard';
 import { computeEditorialFingerprint, createSupabaseEditorialJobLockStore } from './src/services/editorial/editorialJobLock';
+// Instagram Graph API client. Server-side only -- see
+// src/services/instagramGraphService.ts. Publishes a banner already
+// uploaded to Supabase Storage's public `media` bucket to THE RESERVE's
+// connected Instagram professional account.
+import { isInstagramConfigured, publishImageToInstagram } from './src/services/instagramGraphService';
 
 const isProd = process.env.NODE_ENV === 'production' || process.env.VITE_USER_NODE_ENV === 'production';
 
@@ -326,6 +331,41 @@ export async function createApp() {
     res.setHeader('Content-Type', result.contentType || 'application/octet-stream');
     res.setHeader('Cache-Control', 'private, max-age=300');
     return res.status(200).send(result.bytes);
+  });
+
+  // Publishes an already-uploaded Instagram banner (InstagramBannerPanel.tsx's
+  // "Upload to Media Library" step -- the public Supabase Storage URL that
+  // returns) to THE RESERVE's connected Instagram account via the Content
+  // Publishing API (src/services/instagramGraphService.ts). Admin-gated like
+  // every other source/AI route. Requires IG_ACCESS_TOKEN and
+  // IG_BUSINESS_ACCOUNT_ID to be set -- returns 503 (not 500) when they
+  // aren't, so the admin UI can show "not configured yet" instead of a
+  // generic failure.
+  app.post('/api/admin/instagram-publish', async (req, res) => {
+    const auth = await verifyAdminRequest(req);
+    if (auth.ok === false) return res.status(auth.status).json({ error: auth.error });
+
+    if (!isInstagramConfigured()) {
+      return res.status(503).json({
+        error: 'Instagram publishing is not configured on the server (missing IG_ACCESS_TOKEN / IG_BUSINESS_ACCOUNT_ID).',
+      });
+    }
+
+    const { imageUrl, caption } = req.body ?? {};
+    if (typeof imageUrl !== 'string' || !imageUrl.trim()) {
+      return res.status(400).json({ error: 'An imageUrl is required -- upload the banner to the Media Library first.' });
+    }
+    if (typeof caption !== 'string' || !caption.trim()) {
+      return res.status(400).json({ error: 'A caption is required.' });
+    }
+
+    try {
+      const result = await publishImageToInstagram(imageUrl.trim(), caption.trim());
+      return res.status(200).json(result);
+    } catch (error) {
+      console.error('[Instagram Publish] Failed:', error);
+      return res.status(502).json({ error: error instanceof Error ? error.message : 'Failed to publish to Instagram.' });
+    }
   });
 
   // Reserve Editorial Intelligence Engine -- one editorial item, one AI
