@@ -320,8 +320,13 @@ export async function generateEditorialPackage(
 
   const editorialPackage = asEditorialPackage(parsed, validation);
 
-  // 6. Deterministic QA -- no AI call.
-  const qa = runEditorialQA(editorialPackage, { validSourceIds, candidateImageUrls });
+  // 6. Deterministic QA -- no AI call. sourceTextsById feeds the
+  // source-vs-output originality check (see editorialQA.ts) -- keyed by
+  // the same source_N ids already used throughout the prompt/schema/
+  // validation, so QA can look up exactly the source text(s) the model
+  // actually cited via sourcesUsed.
+  const sourceTextsById = new Map(sourcesById.map(({ id, source }) => [id, source.articleText || '']));
+  const qa = runEditorialQA(editorialPackage, { validSourceIds, candidateImageUrls, sourceTextsById });
 
   return {
     ...baseResult,

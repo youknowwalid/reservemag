@@ -1,6 +1,9 @@
 // Deterministic, non-AI quality checks run on an already-structurally-valid
 // editorial package. No AI call is made here and a FAIL never triggers a
-// regeneration. English-only output is a hard publication requirement.
+// regeneration. English-only output is a hard publication requirement, and
+// so is substantial rewriting relative to the source(s) -- see the
+// source_originality check below, which is the deterministic backstop for
+// editorialPromptBuilder.ts's "NON-NEGOTIABLE REWRITING RULE".
 
 import type { EditorialPackage, QaCheckResult, QaReport, QaSeverity } from './editorialTypes';
 
@@ -28,6 +31,62 @@ function normalizeForDupeCheck(text: string): string {
   return text.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+// Source-vs-output originality check -- catches a substantially unrewritten
+// article, which nothing else in the pipeline checks for: the prompt asks
+// for one, but a model can satisfy every other requirement (facts,
+// language, JSON shape, length) while staying very close to the source's
+// own sentences, especially when the source is already in English.
+const SOURCE_OVERLAP_WARNING_THRESHOLD = 0.2;
+const SOURCE_OVERLAP_FAIL_THRESHOLD = 0.35;
+
+function tokenizeWords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ') // strip punctuation, keep letters/numbers/whitespace (Unicode-aware)
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function trigrams(words: string[]): Set<string> {
+  const grams = new Set<string>();
+  for (let i = 0; i <= words.length - 3; i++) grams.add(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+  return grams;
+}
+
+/**
+ * Fraction of the article's trigrams (3-consecutive-word sequences) that
+ * also appear verbatim in the source text -- a containment ratio, not a
+ * symmetric similarity score, because the question that matters is "how
+ * much of what we published already existed word-for-word in the
+ * source," not how much overlap exists in either direction (a long
+ * source trivially "contains" less of a short article's language, which
+ * isn't the failure mode this check exists to catch).
+ *
+ * Trigrams are the standard granularity for this kind of near-duplicate
+ * detection: bigrams produce too many incidental matches from ordinary
+ * English connective phrasing ("of the", "in a"), while longer n-grams
+ * miss a near-copy that lightly edits individual words but keeps the
+ * source's sentence structure intact. A genuinely independent rewrite of
+ * the same facts still produces some nonzero baseline overlap purely
+ * from common phrasing and unavoidable factual terms (names, dates,
+ * figures) -- in practice this baseline sits well under 20%, which is
+ * why that's the warning floor rather than 0. Above roughly a third of
+ * the article's phrasing being verbatim-traceable to the source is a
+ * reasonable, practical line for "this reads as a paraphrase or a
+ * lightly-edited copy, not an original piece" -- these are the same kind
+ * of reasoned, non-clinically-calibrated thresholds already used
+ * elsewhere in this file (e.g. the article-length bands above).
+ */
+function sourceOverlapRatio(articleText: string, sourceText: string): number {
+  const articleGrams = trigrams(tokenizeWords(articleText));
+  if (articleGrams.size === 0) return 0;
+  const sourceGrams = trigrams(tokenizeWords(sourceText));
+  if (sourceGrams.size === 0) return 0;
+  let matched = 0;
+  for (const gram of articleGrams) if (sourceGrams.has(gram)) matched++;
+  return matched / articleGrams.size;
+}
+
 function englishTextFields(pkg: EditorialPackage): Array<[string, string]> {
   return [
     ['title', pkg.title],
@@ -53,7 +112,7 @@ function hasNonLatinLetters(text: string): boolean {
 
 export function runEditorialQA(
   pkg: EditorialPackage,
-  context: { validSourceIds: Set<string>; candidateImageUrls: Set<string> },
+  context: { validSourceIds: Set<string>; candidateImageUrls: Set<string>; sourceTextsById: Map<string, string> },
 ): QaReport {
   const checks: QaCheckResult[] = [];
   const push = (check: string, severity: QaSeverity, message: string) => checks.push({ check, severity, message });
@@ -149,6 +208,37 @@ export function runEditorialQA(
     pkg.warnings.length > 0 ? 'WARNING' : 'PASS',
     pkg.warnings.length > 0 ? `Model self-reported ${pkg.warnings.length} warning(s) -- review before publishing.` : 'Model reported no warnings.',
   );
+
+  // 10. Source-vs-output originality -- see sourceOverlapRatio()'s doc
+  // comment for the method and thresholds. Runs regardless of source
+  // language: a genuinely translated, independently-written article
+  // naturally produces very low trigram overlap with a non-English
+  // source, so this doesn't need a separate language-detection step to
+  // decide whether to run -- it's a real signal either way. Only the
+  // source(s) actually cited in sourcesUsed count; a source that was
+  // retrieved for the job but not drawn on shouldn't count against
+  // originality.
+  const citedSourceText = pkg.sourcesUsed
+    .map((id) => context.sourceTextsById.get(id))
+    .filter((text): text is string => Boolean(text))
+    .join('\n\n');
+  if (citedSourceText) {
+    const overlap = sourceOverlapRatio(pkg.article, citedSourceText);
+    const overlapPct = (overlap * 100).toFixed(1);
+    if (overlap >= SOURCE_OVERLAP_FAIL_THRESHOLD) {
+      push(
+        'source_originality',
+        'FAIL',
+        `${overlapPct}% of the article's phrasing (3-word sequences) is verbatim-traceable to the cited source(s) -- this reads as a close paraphrase or a lightly-edited copy, not a substantially reworded original piece.`,
+      );
+    } else if (overlap >= SOURCE_OVERLAP_WARNING_THRESHOLD) {
+      push('source_originality', 'WARNING', `${overlapPct}% of the article's phrasing is verbatim-traceable to the cited source(s) -- noticeably close in places; worth a review pass.`);
+    } else {
+      push('source_originality', 'PASS', `Only ${overlapPct}% of the article's phrasing is verbatim-traceable to the cited source(s) -- substantially reworded.`);
+    }
+  } else {
+    push('source_originality', 'PASS', 'No cited source text was available to compare against.');
+  }
 
   const overall = checks.reduce<QaSeverity>((acc, c) => worst(acc, c.severity), 'PASS');
   const confidence = Math.max(
