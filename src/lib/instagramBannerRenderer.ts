@@ -109,9 +109,21 @@ export interface InstagramBannerParams {
   focalY?: number;
   /** Manual per-element font-size/position adjustments -- see ElementOverride. Never applies to the "THE"/"RESERVE" masthead, which stays auto-fixed. */
   overrides?: InstagramBannerOverrides;
+  /**
+   * Pre-computed subject cutout -- same pixel dimensions as the original,
+   * unscaled background image -- composited ON TOP of every text/logo
+   * layer, using the identical cover-fit/focal-point transform as the
+   * background photo (see subjectSegmentation.ts, which produces this).
+   * This module never imports the segmentation library itself -- that's
+   * loaded lazily by the caller (InstagramBannerPanel.tsx) so it's never
+   * part of the site-wide bundle. Optional; when omitted or null, the
+   * banner renders exactly as before (photo fully behind every layer).
+   */
+  subjectCutout?: HTMLCanvasElement | null;
 }
 
-function loadImage(src: string): Promise<HTMLImageElement> {
+/** Loads an <img> from any URL (including a blob: object URL) -- exported so subjectSegmentation.ts's caller (InstagramBannerPanel.tsx) can load the same image for segmentation without duplicating this. */
+export function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
@@ -431,6 +443,21 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
   const logoX = BANNER_WIDTH - MARGIN - logoSize + (overrides.logo?.offsetX ?? 0);
   const logoY = creditY - logoSize + 12 + (overrides.logo?.offsetY ?? 0);
   ctx.drawImage(logoImg, logoX, logoY, logoSize, logoSize);
+
+  // 9. Subject-over-text compositing -- the segmented cutout is drawn
+  // LAST, on top of every text/logo layer above, using the exact same
+  // scale/drawX/drawY that placed the background photo in step 1. Both
+  // layers share that one transform, so the cutout always lines up
+  // pixel-for-pixel with the photo underneath it regardless of whatever
+  // crop/focal point is set -- it isn't computed once and then
+  // separately positioned, it's the same photo redrawn with the subject
+  // isolated, through the same math. Where the subject's own pixels
+  // overlap the masthead/headline/etc., they now sit in front of that
+  // text (e.g. hair over letters); everywhere else, the text drawn in
+  // steps 3-8 remains on top of the flat background as before.
+  if (params.subjectCutout) {
+    ctx.drawImage(params.subjectCutout, drawX, drawY, drawWidth, drawHeight);
+  }
 }
 
 /** Converts the rendered canvas to a PNG Blob (used for both the Supabase Storage upload and the manual download button). */

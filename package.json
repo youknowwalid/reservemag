@@ -11,10 +11,12 @@
     "test:source-retrieval": "tsx --env-file-if-exists=.env scripts/test-source-retrieval.ts",
     "test:editorial-cost-safety": "tsx scripts/test-editorial-cost-safety.ts",
     "test:editorial-auth": "tsx --env-file-if-exists=.env scripts/test-editorial-auth-propagation.ts",
-    "test:editorial-provider": "tsx scripts/test-editorial-provider-responses.ts"
+    "test:editorial-provider": "tsx scripts/test-editorial-provider-responses.ts",
+    "test:subject-segmentation-fallback": "tsx scripts/test-subject-segmentation-fallback.ts"
   },
   "dependencies": {
     "@google/genai": "latest",
+    "@mediapipe/tasks-vision": "^1.0.1",
     "@supabase/supabase-js": "^2.45.0",
     "cheerio": "^1.2.0",
     "cors": "^2.8.5",
