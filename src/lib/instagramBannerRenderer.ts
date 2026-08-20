@@ -111,13 +111,17 @@ export interface InstagramBannerParams {
   overrides?: InstagramBannerOverrides;
   /**
    * Pre-computed subject cutout -- same pixel dimensions as the original,
-   * unscaled background image -- composited ON TOP of every text/logo
-   * layer, using the identical cover-fit/focal-point transform as the
-   * background photo (see subjectSegmentation.ts, which produces this).
-   * This module never imports the segmentation library itself -- that's
-   * loaded lazily by the caller (InstagramBannerPanel.tsx) so it's never
-   * part of the site-wide bundle. Optional; when omitted or null, the
-   * banner renders exactly as before (photo fully behind every layer).
+   * unscaled background image -- composited on top of the "RESERVE"
+   * masthead ONLY, using the identical cover-fit/focal-point transform as
+   * the background photo (see subjectSegmentation.ts, which produces
+   * this). Every other text layer (kicker, subtitle, headline, credit
+   * line, logo) is drawn AFTER the cutout and always renders fully on
+   * top of it -- the subject never covers those, regardless of where it
+   * sits in frame after cropping. This module never imports the
+   * segmentation library itself -- that's loaded lazily by the caller
+   * (InstagramBannerPanel.tsx) so it's never part of the site-wide
+   * bundle. Optional; when omitted or null, the banner renders exactly
+   * as before (photo fully behind every layer, including the masthead).
    */
   subjectCutout?: HTMLCanvasElement | null;
 }
@@ -356,6 +360,20 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
   ctx.font = `800 ${mastheadSize}px "${FONT_DISPLAY}"`;
   ctx.fillText('RESERVE', MARGIN, cursorY);
 
+  // 3b. Subject-over-text compositing -- drawn HERE specifically, right
+  // after the masthead and before every other text layer, so the
+  // subject can only ever sit in front of "THE"/"RESERVE" (the intended
+  // "hair over the letters" effect) and never in front of the kicker,
+  // subtitle, headline, credit line, or logo drawn below. Uses the exact
+  // same scale/drawX/drawY that placed the background photo in step 1,
+  // so it always lines up pixel-for-pixel with the photo underneath it
+  // regardless of whatever crop/focal point is set -- it isn't computed
+  // once and then separately positioned, it's the same photo redrawn
+  // with the subject isolated, through the same transform.
+  if (params.subjectCutout) {
+    ctx.drawImage(params.subjectCutout, drawX, drawY, drawWidth, drawHeight);
+  }
+
   // 4. Kicker (gold). Gap below the masthead scales with its actual size.
   // `offsetX`/`offsetY` (manual overrides) only nudge where THIS element
   // draws -- they never feed back into cursorY, so a manual nudge on one
@@ -443,21 +461,6 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
   const logoX = BANNER_WIDTH - MARGIN - logoSize + (overrides.logo?.offsetX ?? 0);
   const logoY = creditY - logoSize + 12 + (overrides.logo?.offsetY ?? 0);
   ctx.drawImage(logoImg, logoX, logoY, logoSize, logoSize);
-
-  // 9. Subject-over-text compositing -- the segmented cutout is drawn
-  // LAST, on top of every text/logo layer above, using the exact same
-  // scale/drawX/drawY that placed the background photo in step 1. Both
-  // layers share that one transform, so the cutout always lines up
-  // pixel-for-pixel with the photo underneath it regardless of whatever
-  // crop/focal point is set -- it isn't computed once and then
-  // separately positioned, it's the same photo redrawn with the subject
-  // isolated, through the same math. Where the subject's own pixels
-  // overlap the masthead/headline/etc., they now sit in front of that
-  // text (e.g. hair over letters); everywhere else, the text drawn in
-  // steps 3-8 remains on top of the flat background as before.
-  if (params.subjectCutout) {
-    ctx.drawImage(params.subjectCutout, drawX, drawY, drawWidth, drawHeight);
-  }
 }
 
 /** Converts the rendered canvas to a PNG Blob (used for both the Supabase Storage upload and the manual download button). */
