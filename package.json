@@ -12,7 +12,8 @@
     "test:editorial-cost-safety": "tsx scripts/test-editorial-cost-safety.ts",
     "test:editorial-auth": "tsx --env-file-if-exists=.env scripts/test-editorial-auth-propagation.ts",
     "test:editorial-provider": "tsx scripts/test-editorial-provider-responses.ts",
-    "test:subject-segmentation-fallback": "tsx scripts/test-subject-segmentation-fallback.ts"
+    "test:subject-segmentation-fallback": "tsx scripts/test-subject-segmentation-fallback.ts",
+    "test:editorial-qa-originality": "tsx scripts/test-editorial-qa-originality.ts"
   },
   "dependencies": {
     "@google/genai": "latest",
