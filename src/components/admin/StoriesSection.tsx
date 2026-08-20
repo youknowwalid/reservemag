@@ -22,6 +22,7 @@ import RichTextEditor from './RichTextEditor';
 import ImageUploadForm from './ImageUploadForm';
 import FocalPointEditor from './shared/FocalPointEditor';
 import { categoryService } from '../../services/categoryService';
+import InstagramBannerPanel from './InstagramBannerPanel';
 
 export default function StoriesSection() {
   const [articles, setArticles] = useState<Article[]>([]);
@@ -399,8 +400,52 @@ export default function StoriesSection() {
               </div>
             </div>
 
+            {/* Instagram Banner + Publish -- reuses the exact same
+                InstagramBannerPanel component the Editorial Factory mounts
+                right after generating a new article (see
+                EditorialGenerationPanel.tsx), so any archived story can
+                have its banner (re)rendered and (re)published later, e.g.
+                if it was missed the first time. Persists against this
+                article's own row (recordTable="articles") rather than an
+                editorial_generations row, since a manually-created or
+                older story has no generation record to persist against --
+                see the instagram_banner_url/config/media_id/published_at
+                columns added to `articles` for this. Gated on the article
+                already being saved (has an id) since there's nothing to
+                persist a banner/publish-status against otherwise. */}
+            {editingArticle.id ? (
+              <InstagramBannerPanel
+                recordId={editingArticle.id}
+                recordTable="articles"
+                editorialPackage={{
+                  coverKicker: (editingArticle.category || '').toUpperCase(),
+                  coverSecondaryLine: editingArticle.subtitle || editingArticle.excerpt || '',
+                  instagramHeadline: editingArticle.title || '',
+                  imageUrl: editingArticle.image?.url || editingArticle.mobileImage?.url || '',
+                }}
+                sources={
+                  editingArticle.image?.credit || editingArticle.image?.source
+                    ? [
+                        {
+                          sourceId: 'article-hero-image',
+                          url: editingArticle.image?.source || '',
+                          title: editingArticle.title || null,
+                          publisher: editingArticle.image?.credit || null,
+                          status: 'SUCCESS',
+                          wordCount: 0,
+                        },
+                      ]
+                    : []
+                }
+              />
+            ) : (
+              <div className="text-[10px] uppercase tracking-widest text-zinc-600 bg-zinc-900/30 border border-white/5 p-6">
+                Save this story first to unlock Instagram banner tools.
+              </div>
+            )}
+
             <div className="bg-zinc-900/30 border border-white/5 overflow-hidden">
-              <button 
+              <button
                 type="button"
                 onClick={() => {
                   const seoSection = document.getElementById('seo-section');

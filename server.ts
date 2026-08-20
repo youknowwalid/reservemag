@@ -35,6 +35,12 @@ import { computeEditorialFingerprint, createSupabaseEditorialJobLockStore } from
 // uploaded to Supabase Storage's public `media` bucket to THE RESERVE's
 // connected Instagram professional account.
 import { isInstagramConfigured, publishImageToInstagram } from './src/services/instagramGraphService';
+// Cloudflare R2 client. Server-only -- see src/services/r2StorageService.ts.
+// Stores exactly one thing: the final rendered Instagram banner PNG, so its
+// public URL can be handed to the Instagram publish route above. Everything
+// else (DB records, the Media Library, the source-image proxy) stays on
+// Supabase, untouched.
+import { isR2Configured, uploadBannerToR2 } from './src/services/r2StorageService';
 
 const isProd = process.env.NODE_ENV === 'production' || process.env.VITE_USER_NODE_ENV === 'production';
 
@@ -333,12 +339,50 @@ export async function createApp() {
     return res.status(200).send(result.bytes);
   });
 
-  // Publishes an already-uploaded Instagram banner (InstagramBannerPanel.tsx's
-  // "Upload to Media Library" step -- the public Supabase Storage URL that
-  // returns) to THE RESERVE's connected Instagram account via the Content
-  // Publishing API (src/services/instagramGraphService.ts). Admin-gated like
-  // every other source/AI route. Requires IG_ACCESS_TOKEN and
-  // IG_BUSINESS_ACCOUNT_ID to be set -- returns 503 (not 500) when they
+  // Uploads the final rendered Instagram banner PNG (InstagramBannerPanel.tsx's
+  // "Upload Banner" step) to Cloudflare R2 and returns its public URL --
+  // the one thing this app stores in R2 rather than Supabase (see
+  // src/services/r2StorageService.ts's header comment for why). Admin-gated
+  // like every other route here. Takes the PNG as a raw binary body
+  // (Content-Type: image/png), not JSON -- express.raw() is scoped to just
+  // this route so it doesn't affect the global express.json() middleware
+  // used everywhere else. `recordId` (query string, optional) only affects
+  // the storage key/filename for readability -- it's never trusted for
+  // anything else, so it's sanitized to a safe filename fragment rather
+  // than passed through raw.
+  app.post('/api/admin/instagram-banner-upload', express.raw({ type: 'image/png', limit: '10mb' }), async (req, res) => {
+    const auth = await verifyAdminRequest(req);
+    if (auth.ok === false) return res.status(auth.status).json({ error: auth.error });
+
+    if (!isR2Configured()) {
+      return res.status(503).json({
+        error: 'Banner storage is not configured on the server (missing R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET_NAME / R2_PUBLIC_BASE_URL).',
+      });
+    }
+
+    const bytes = req.body;
+    if (!Buffer.isBuffer(bytes) || bytes.length === 0) {
+      return res.status(400).json({ error: 'A PNG image body is required (Content-Type: image/png).' });
+    }
+
+    const rawRecordId = typeof req.query.recordId === 'string' ? req.query.recordId : '';
+    const safeRecordId = rawRecordId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 100) || 'untracked';
+    const key = `instagram-banners/${safeRecordId}-${Date.now()}.png`;
+
+    try {
+      const url = await uploadBannerToR2(bytes, 'image/png', key);
+      return res.status(200).json({ url });
+    } catch (error) {
+      console.error('[Instagram Banner Upload] Failed:', error);
+      return res.status(502).json({ error: error instanceof Error ? error.message : 'Failed to upload the banner.' });
+    }
+  });
+
+  // Publishes an already-uploaded Instagram banner (a public R2 URL from
+  // the route above) to THE RESERVE's connected Instagram account via the
+  // Content Publishing API (src/services/instagramGraphService.ts).
+  // Admin-gated like every other source/AI route. Requires IG_ACCESS_TOKEN
+  // and IG_BUSINESS_ACCOUNT_ID to be set -- returns 503 (not 500) when they
   // aren't, so the admin UI can show "not configured yet" instead of a
   // generic failure.
   app.post('/api/admin/instagram-publish', async (req, res) => {
@@ -353,7 +397,7 @@ export async function createApp() {
 
     const { imageUrl, caption } = req.body ?? {};
     if (typeof imageUrl !== 'string' || !imageUrl.trim()) {
-      return res.status(400).json({ error: 'An imageUrl is required -- upload the banner to the Media Library first.' });
+      return res.status(400).json({ error: 'An imageUrl is required -- upload the banner first.' });
     }
     if (typeof caption !== 'string' || !caption.trim()) {
       return res.status(400).json({ error: 'A caption is required.' });

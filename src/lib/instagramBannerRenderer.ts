@@ -65,6 +65,13 @@ const MARGIN = 64;
 const CREAM = '#F1F0E6';
 const GOLD = '#BFA076';
 
+/** Sampled brand defaults for the three color-pickable text elements (see the CREAM/GOLD doc comment above). Exported so InstagramBannerPanel.tsx's color pickers default to -- and "Reset to Auto" restores -- these exact values rather than a hardcoded duplicate. The masthead and logo are intentionally absent: the masthead stays auto-fixed to CREAM per the earlier decision, and the logo is a raster asset with no drawable color. */
+export const DEFAULT_ELEMENT_COLORS: Record<'kicker' | 'subtitle' | 'headline', string> = {
+  kicker: GOLD,
+  subtitle: CREAM,
+  headline: CREAM,
+};
+
 const FONT_DISPLAY = 'Bodoni Moda'; // masthead + headline only
 const FONT_SANS = 'Inter'; // kicker, subtitle, credit line -- unchanged, already loaded site-wide
 
@@ -84,6 +91,11 @@ export interface ElementOverride {
   fontSize?: number;
   offsetX?: number;
   offsetY?: number;
+  // `color` -- undefined means "use this element's sampled brand default"
+  // (see DEFAULT_ELEMENT_COLORS below). Only kicker/subtitle/headline read
+  // it; the masthead stays auto-fixed and the logo is a raster asset, so
+  // their overrides never look at this field.
+  color?: string;
 }
 
 export interface InstagramBannerOverrides {
@@ -383,7 +395,7 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
   if (params.kicker.trim()) {
     const kickerSize = overrides.kicker?.fontSize ?? 28;
     cursorY += ascent(kickerSize);
-    ctx.fillStyle = GOLD;
+    ctx.fillStyle = overrides.kicker?.color ?? GOLD;
     ctx.font = `600 ${kickerSize}px "${FONT_SANS}"`;
     drawTrackedText(
       ctx,
@@ -399,7 +411,7 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
   if (params.subtitle.trim()) {
     const subtitleSize = overrides.subtitle?.fontSize ?? 32;
     cursorY += ascent(subtitleSize);
-    ctx.fillStyle = CREAM;
+    ctx.fillStyle = overrides.subtitle?.color ?? CREAM;
     ctx.font = `600 ${subtitleSize}px "${FONT_SANS}"`;
     const subtitleLines = wrapWithExplicitBreaks(ctx, params.subtitle.trim().toUpperCase(), contentWidth, 2);
     const subtitleX = MARGIN + (overrides.subtitle?.offsetX ?? 0);
@@ -417,7 +429,7 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
   const creditY = BANNER_HEIGHT - 40;
   const headlineBottom = creditY - 56;
   if (params.headline.trim()) {
-    ctx.fillStyle = CREAM;
+    ctx.fillStyle = overrides.headline?.color ?? CREAM;
     const headlineText = params.headline.trim().toUpperCase();
     let fontSize: number;
     let lines: string[];

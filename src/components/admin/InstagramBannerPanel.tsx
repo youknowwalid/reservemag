@@ -2,33 +2,46 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Loader2, ImageIcon, UploadCloud, Download, CheckCircle2, XCircle, RotateCcw, Send } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { instagramPublishService } from '../../services/instagramPublishService';
+import { bannerUploadService } from '../../services/bannerUploadService';
 import {
   renderInstagramBanner,
   canvasToPngBlob,
   loadImage,
   BANNER_WIDTH,
   BANNER_HEIGHT,
+  DEFAULT_ELEMENT_COLORS,
   type InstagramBannerOverrides,
   type ElementOverride,
 } from '../../lib/instagramBannerRenderer';
 import { segmentSubject } from '../../lib/subjectSegmentation';
 import FocalPointEditor from './shared/FocalPointEditor';
 
-// Instagram Banner Automation -- manual, on-demand step run from a
-// finished editorial generation's result. Prefills THE RESERVE's fixed
-// banner template (see instagramBannerRenderer.ts -- the layout itself is
-// not editable here, only its text/image inputs and the four adjustable
-// elements below are) from the editorial package, lets the admin adjust
-// those inputs, renders a live preview in the browser via <canvas>, and
-// on request uploads the result to the `media` storage bucket and
-// records its URL + full render configuration on the generation's row so
-// reopening it later restores the exact same manual layout.
+// Instagram Banner Automation -- manual, on-demand step run from either a
+// finished editorial generation's result (Editorial Factory, right after
+// generating) or an already-archived article (Stories Archive's edit
+// view, reopened any time later -- see StoriesSection.tsx). Prefills THE
+// RESERVE's fixed banner template (see instagramBannerRenderer.ts -- the
+// layout itself is not editable here, only its text/image inputs and the
+// four adjustable elements below are) from whichever caller's package,
+// lets the admin adjust those inputs, renders a live preview in the
+// browser via <canvas>, and on request uploads the result to Cloudflare
+// R2 (see src/services/r2StorageService.ts + bannerUploadService.ts --
+// R2 is used for this ONE upload only; every DB record still lives in
+// Supabase) and records its public R2 URL + full render configuration +
+// Instagram publish status on `recordTable`'s row (either an
+// editorial_generations row or an articles row -- both carry identical
+// instagram_banner_url / instagram_banner_config / instagram_media_id /
+// instagram_published_at columns for exactly this reason) so reopening
+// it later restores the exact same manual layout and shows whether it's
+// already been posted.
 //
 // No AI request of any kind happens in this component -- rendering is
 // pure client-side canvas drawing, and the only network calls are the
 // admin-gated image proxy (to load the source photo without tainting the
-// canvas -- see server.ts's /api/admin/image-proxy), the Supabase
-// Storage upload, and reading/writing this generation's saved config.
+// canvas -- see server.ts's /api/admin/image-proxy), the R2 banner
+// upload, the Instagram publish route, and reading/writing recordTable's
+// saved config + publish status (all three of those last reads/writes
+// stay on Supabase).
 
 interface SourceSummary {
   sourceId: string;
@@ -40,7 +53,10 @@ interface SourceSummary {
 }
 
 interface InstagramBannerPanelProps {
-  generationId: string | null;
+  /** The row this banner's config + publish status persists against, or null to run without persistence (nothing saved/restored, no already-published tracking -- rendering, download, upload, and publish still all work). */
+  recordId: string | null;
+  /** Which table `recordId` refers to. Defaults to 'editorial_generations' (the Editorial Factory entry point); pass 'articles' when mounting from the Stories Archive. */
+  recordTable?: 'editorial_generations' | 'articles';
   editorialPackage: {
     coverKicker: string;
     coverSecondaryLine: string;
@@ -58,7 +74,7 @@ const DEFAULT_OVERRIDES: Required<InstagramBannerOverrides> = {
   logo: EMPTY_OVERRIDE,
 };
 
-/** What gets saved to editorial_generations.instagram_banner_config -- everything needed to reproduce this exact banner on reopen, not just the resulting image. */
+/** What gets saved to recordTable.instagram_banner_config -- everything needed to reproduce this exact banner on reopen, not just the resulting image. `overrides` already carries each element's `color` (see ElementOverride), so no separate color field is needed here. */
 interface SavedBannerConfig {
   kicker: string;
   subtitle: string;
@@ -70,7 +86,7 @@ interface SavedBannerConfig {
   overrides: Required<InstagramBannerOverrides>;
 }
 
-/** One row in the manual adjustment panel: a font-size stepper, X/Y nudge inputs, and a "Reset to auto" button. Position is a numeric nudge rather than drag-on-canvas -- see the header comment on the "Manual Adjustments" section below for why. */
+/** One row in the manual adjustment panel: a font-size stepper, X/Y nudge inputs, an optional color picker, and a "Reset to auto" button. Position is a numeric nudge rather than drag-on-canvas -- see the header comment on the "Manual Adjustments" section below for why. */
 function ElementAdjustRow({
   label,
   value,
@@ -78,6 +94,7 @@ function ElementAdjustRow({
   autoFontSizeLabel,
   minFontSize,
   maxFontSize,
+  defaultColor,
 }: {
   label: string;
   value: ElementOverride;
@@ -85,15 +102,18 @@ function ElementAdjustRow({
   autoFontSizeLabel: string;
   minFontSize: number;
   maxFontSize: number;
+  /** Sampled brand default this element's color picker starts at (and "Reset to Auto" restores). Omit for elements with no drawable color (the Logo row) -- the color picker itself is hidden in that case. */
+  defaultColor?: string;
 }) {
   const isAuto = value.fontSize === undefined;
+  const isAutoColor = value.color === undefined;
   return (
     <div className="space-y-2 bg-black/30 border border-white/5 p-3">
       <div className="flex items-center justify-between">
         <span className="text-[9px] uppercase tracking-widest text-zinc-400 font-bold">{label}</span>
         <button
           onClick={() => onChange(EMPTY_OVERRIDE)}
-          disabled={isAuto && value.offsetX === 0 && value.offsetY === 0}
+          disabled={isAuto && isAutoColor && value.offsetX === 0 && value.offsetY === 0}
           className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-reserve-accent hover:text-white disabled:opacity-30 disabled:cursor-default"
         >
           <RotateCcw size={10} /> Reset to Auto
@@ -132,12 +152,31 @@ function ElementAdjustRow({
           />
         </div>
         <div className="text-[9px] text-zinc-600">px nudge</div>
+        {defaultColor && (
+          <div className="col-span-3 flex items-center gap-2 pt-1">
+            <span className="text-[9px] text-zinc-600 w-16 shrink-0">Color</span>
+            <input
+              type="color"
+              value={value.color ?? defaultColor}
+              onChange={(e) => onChange({ ...value, color: e.target.value })}
+              className="w-8 h-6 bg-black border border-white/10 p-0.5 cursor-pointer"
+            />
+            <input
+              type="text"
+              value={value.color ?? defaultColor}
+              onChange={(e) => onChange({ ...value, color: e.target.value })}
+              className="flex-1 bg-black border border-white/10 p-1.5 text-[10px] font-mono uppercase"
+              maxLength={7}
+            />
+            <span className="text-[9px] text-zinc-600 w-16 text-right">{isAutoColor ? 'Auto' : 'Custom'}</span>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-export default function InstagramBannerPanel({ generationId, editorialPackage, sources }: InstagramBannerPanelProps) {
+export default function InstagramBannerPanel({ recordId, recordTable = 'editorial_generations', editorialPackage, sources }: InstagramBannerPanelProps) {
   const [expanded, setExpanded] = useState(false);
   const [kicker, setKicker] = useState(editorialPackage.coverKicker);
   const [subtitle, setSubtitle] = useState(editorialPackage.coverSecondaryLine);
@@ -167,7 +206,7 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [hasPreview, setHasPreview] = useState(false);
   // Instagram Content Publishing -- only enabled once the banner has been
-  // uploaded to the Media Library (uploadedUrl set), since the Graph API's
+  // uploaded (uploadedUrl set, the R2 public URL), since the Graph API's
   // /media endpoint requires a publicly-fetchable image_url, not a raw
   // file. Caption is seeded from the editorial headline once and then
   // freely editable -- never re-synced on later headline/kicker edits, so
@@ -175,7 +214,12 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
   const [caption, setCaption] = useState(() => editorialPackage.instagramHeadline || editorialPackage.coverKicker || '');
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
-  const [publishResult, setPublishResult] = useState<{ mediaId: string; permalink: string | null } | null>(null);
+  // Set either from a fresh publish this session (permalink included) or
+  // restored on mount from recordTable's instagram_media_id/
+  // instagram_published_at (permalink unknown for a restored one -- it
+  // was never persisted, only the media id was -- so the status still
+  // shows correctly, just without a clickable link).
+  const [publishResult, setPublishResult] = useState<{ mediaId: string; permalink: string | null; publishedAt: string } | null>(null);
   const [loadedSavedConfig, setLoadedSavedConfig] = useState(false);
   // Subject-over-text compositing status, purely informational -- the
   // actual fallback-on-failure logic lives in subjectSegmentation.ts
@@ -203,35 +247,41 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
     [],
   );
 
-  // Restore a previously-saved manual layout, if this generation has one.
-  // Only ever reads -- never writes here; saving happens explicitly via
-  // "Upload to Media Library" (see uploadToMediaLibrary below).
+  // Restore a previously-saved manual layout and publish status, if this
+  // record has one. Only ever reads -- never writes here; saving happens
+  // explicitly via "Upload Banner" (R2 URL + config) and "Publish to
+  // Instagram" (media id/published-at) below.
   useEffect(() => {
-    if (!generationId) return;
+    if (!recordId) return;
     let cancelled = false;
     (async () => {
       const { data, error: fetchError } = await supabase
-        .from('editorial_generations')
-        .select('instagram_banner_config')
-        .eq('id', generationId)
+        .from(recordTable)
+        .select('instagram_banner_config, instagram_media_id, instagram_published_at')
+        .eq('id', recordId)
         .maybeSingle();
-      if (cancelled || fetchError || !data?.instagram_banner_config) return;
-      const saved = data.instagram_banner_config as SavedBannerConfig;
-      setKicker(saved.kicker ?? kicker);
-      setSubtitle(saved.subtitle ?? subtitle);
-      setHeadline(saved.headline ?? headline);
-      setCreditLine(saved.creditLine ?? creditLine);
-      setImageUrl(saved.imageUrl ?? imageUrl);
-      setFocalX(saved.focalX ?? 50);
-      setFocalY(saved.focalY ?? 50);
-      setOverrides(saved.overrides ?? DEFAULT_OVERRIDES);
-      setLoadedSavedConfig(true);
+      if (cancelled || fetchError || !data) return;
+      if (data.instagram_banner_config) {
+        const saved = data.instagram_banner_config as SavedBannerConfig;
+        setKicker(saved.kicker ?? kicker);
+        setSubtitle(saved.subtitle ?? subtitle);
+        setHeadline(saved.headline ?? headline);
+        setCreditLine(saved.creditLine ?? creditLine);
+        setImageUrl(saved.imageUrl ?? imageUrl);
+        setFocalX(saved.focalX ?? 50);
+        setFocalY(saved.focalY ?? 50);
+        setOverrides(saved.overrides ?? DEFAULT_OVERRIDES);
+        setLoadedSavedConfig(true);
+      }
+      if (data.instagram_media_id && data.instagram_published_at) {
+        setPublishResult({ mediaId: data.instagram_media_id, permalink: null, publishedAt: data.instagram_published_at });
+      }
     })();
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally runs once per generationId, not on every field edit
-  }, [generationId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally runs once per recordId, not on every field edit
+  }, [recordId, recordTable]);
 
   const renderFromSrc = async (imageSrc: string) => {
     const canvas = canvasRef.current;
@@ -325,7 +375,7 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
     URL.revokeObjectURL(url);
   };
 
-  const uploadToMediaLibrary = async () => {
+  const uploadBanner = async () => {
     const canvas = canvasRef.current;
     if (!canvas || !hasPreview) {
       setError('Render a preview before uploading.');
@@ -340,27 +390,22 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
     setPublishError(null);
     try {
       const blob = await canvasToPngBlob(canvas);
-      const storagePath = `instagram-banners/${generationId || 'untracked'}-${Date.now()}.png`;
+      // Bytes go to Cloudflare R2 (server-side, via
+      // /api/admin/instagram-banner-upload -- see bannerUploadService.ts)
+      // rather than Supabase Storage. The record of that upload (URL +
+      // config) still goes to Supabase below, unchanged.
+      const publicUrl = await bannerUploadService.uploadRenderedBanner(blob, recordId);
 
-      const { error: uploadError } = await supabase.storage.from('media').upload(storagePath, blob, {
-        contentType: 'image/png',
-        upsert: false,
-      });
-      if (uploadError) throw uploadError;
-
-      const { data } = supabase.storage.from('media').getPublicUrl(storagePath);
-      const publicUrl = data.publicUrl;
-
-      if (generationId) {
+      if (recordId) {
         const config: SavedBannerConfig = { kicker, subtitle, headline, creditLine, imageUrl, focalX, focalY, overrides };
         const { error: dbError } = await supabase
-          .from('editorial_generations')
+          .from(recordTable)
           .update({ instagram_banner_url: publicUrl, instagram_banner_config: config })
-          .eq('id', generationId);
+          .eq('id', recordId);
         // The banner itself uploaded fine even if this fails -- surface it
         // as a visible (but non-fatal) note rather than silently losing
         // the association, mirroring mediaService.uploadFile's pattern.
-        if (dbError) console.error('Instagram banner uploaded, but failed to record its URL/config on the generation row:', dbError);
+        if (dbError) console.error(`Instagram banner uploaded, but failed to record its URL/config on the ${recordTable} row:`, dbError);
       }
 
       setUploadedUrl(publicUrl);
@@ -373,7 +418,7 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
 
   const publishToInstagram = async () => {
     if (!uploadedUrl) {
-      setPublishError('Upload the banner to the Media Library first -- Instagram needs a public image URL.');
+      setPublishError('Upload the banner first -- Instagram needs a public image URL.');
       return;
     }
     if (!caption.trim()) {
@@ -384,7 +429,20 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
     setPublishing(true);
     try {
       const result = await instagramPublishService.publish(uploadedUrl, caption.trim());
-      setPublishResult(result);
+      const publishedAt = new Date().toISOString();
+      setPublishResult({ ...result, publishedAt });
+
+      if (recordId) {
+        const { error: dbError } = await supabase
+          .from(recordTable)
+          .update({ instagram_media_id: result.mediaId, instagram_published_at: publishedAt })
+          .eq('id', recordId);
+        // The post itself went out fine even if this fails -- surface it
+        // as a visible (but non-fatal) note rather than silently losing
+        // the "already published" status, mirroring the banner upload's
+        // own non-fatal DB-write pattern above.
+        if (dbError) console.error(`Published to Instagram, but failed to record publish status on the ${recordTable} row:`, dbError);
+      }
     } catch (err: any) {
       setPublishError(err?.message || 'Failed to publish to Instagram.');
     } finally {
@@ -463,12 +521,12 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
               <Download size={14} /> Download PNG
             </button>
             <button
-              onClick={uploadToMediaLibrary}
+              onClick={uploadBanner}
               disabled={!hasPreview || uploading}
               className="px-6 py-3 border border-white/10 text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-white/5 transition-all disabled:opacity-30"
             >
               {uploading ? <Loader2 className="animate-spin" size={14} /> : <UploadCloud size={14} />}
-              Upload to Media Library
+              Upload Banner
             </button>
           </div>
 
@@ -520,11 +578,11 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
             <button
               onClick={publishToInstagram}
               disabled={!uploadedUrl || publishing}
-              title={!uploadedUrl ? 'Upload to the Media Library first' : undefined}
+              title={!uploadedUrl ? 'Upload the banner first' : undefined}
               className="px-6 py-3 bg-reserve-accent text-black text-[10px] font-bold uppercase tracking-widest flex items-center gap-2 hover:opacity-90 transition-all disabled:opacity-30 disabled:cursor-default"
             >
               {publishing ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}
-              Publish to Instagram
+              {publishResult ? 'Re-publish to Instagram' : 'Publish to Instagram'}
             </button>
             {publishError && (
               <div className="flex items-center gap-2 text-rose-500 text-[10px]">
@@ -533,7 +591,7 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
             )}
             {publishResult && (
               <div className="flex items-center gap-2 text-emerald-400 text-[10px] break-all">
-                <CheckCircle2 size={12} className="shrink-0" /> Published --{' '}
+                <CheckCircle2 size={12} className="shrink-0" /> Published {new Date(publishResult.publishedAt).toLocaleString()} --{' '}
                 {publishResult.permalink ? (
                   <a href={publishResult.permalink} target="_blank" rel="noreferrer" className="underline">
                     {publishResult.permalink}
@@ -581,6 +639,7 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
               autoFontSizeLabel="Auto (28px)"
               minFontSize={16}
               maxFontSize={48}
+              defaultColor={DEFAULT_ELEMENT_COLORS.kicker}
             />
             <ElementAdjustRow
               label="Subtitle"
@@ -589,6 +648,7 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
               autoFontSizeLabel="Auto (32px)"
               minFontSize={18}
               maxFontSize={52}
+              defaultColor={DEFAULT_ELEMENT_COLORS.subtitle}
             />
             <ElementAdjustRow
               label="Headline"
@@ -597,6 +657,7 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
               autoFontSizeLabel="Auto (fit)"
               minFontSize={36}
               maxFontSize={120}
+              defaultColor={DEFAULT_ELEMENT_COLORS.headline}
             />
             <ElementAdjustRow
               label="Logo"
