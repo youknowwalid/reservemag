@@ -4,11 +4,13 @@ import { supabase } from '../../lib/supabase';
 import {
   renderInstagramBanner,
   canvasToPngBlob,
+  loadImage,
   BANNER_WIDTH,
   BANNER_HEIGHT,
   type InstagramBannerOverrides,
   type ElementOverride,
 } from '../../lib/instagramBannerRenderer';
+import { segmentSubject } from '../../lib/subjectSegmentation';
 import FocalPointEditor from './shared/FocalPointEditor';
 
 // Instagram Banner Automation -- manual, on-demand step run from a
@@ -164,9 +166,24 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [hasPreview, setHasPreview] = useState(false);
   const [loadedSavedConfig, setLoadedSavedConfig] = useState(false);
+  // Subject-over-text compositing status, purely informational -- the
+  // actual fallback-on-failure logic lives in subjectSegmentation.ts
+  // (which never throws); this only reflects its outcome for the admin,
+  // since a plain (non-composited) banner is a normal, acceptable result
+  // for a photo with no clear subject, not an error state.
+  const [segmentationStatus, setSegmentationStatus] = useState<'idle' | 'analyzing' | 'applied' | 'not-detected' | 'unavailable'>('idle');
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const objectUrlRef = useRef<string | null>(null);
+  // The segmented cutout for the currently-loaded image, in the original
+  // image's pixel space -- computed once per fetched image (see
+  // renderPreview below), then reused as-is across every subsequent live-
+  // preview redraw (text/focal/override changes) without re-running
+  // segmentation, since the cutout already carries no crop/position
+  // baked into it -- the renderer applies the current crop/focal
+  // transform to it fresh on every draw (see instagramBannerRenderer.ts
+  // step 9), so it never goes stale when only the crop changes.
+  const subjectCutoutRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(
     () => () => {
@@ -208,7 +225,17 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
   const renderFromSrc = async (imageSrc: string) => {
     const canvas = canvasRef.current;
     if (!canvas) throw new Error('Canvas is not ready.');
-    await renderInstagramBanner(canvas, { imageSrc, kicker, subtitle, headline, creditLine, focalX, focalY, overrides });
+    await renderInstagramBanner(canvas, {
+      imageSrc,
+      kicker,
+      subtitle,
+      headline,
+      creditLine,
+      focalX,
+      focalY,
+      overrides,
+      subjectCutout: subjectCutoutRef.current,
+    });
   };
 
   const renderPreview = async () => {
@@ -240,11 +267,25 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
       const objectUrl = URL.createObjectURL(blob);
       objectUrlRef.current = objectUrl;
 
+      // Subject-over-text compositing: segmented once per newly-fetched
+      // image (not on every text/crop tweak -- see subjectCutoutRef's
+      // comment above). segmentSubject() never throws; a null result
+      // (timeout, load failure, or no confident subject found) simply
+      // means the banner renders without the overlap effect, which is
+      // this feature's explicit, acceptable degraded state, not an error
+      // shown to the admin.
+      setSegmentationStatus('analyzing');
+      const subjectImg = await loadImage(objectUrl);
+      const cutout = await segmentSubject(subjectImg);
+      subjectCutoutRef.current = cutout;
+      setSegmentationStatus(cutout ? 'applied' : 'not-detected');
+
       await renderFromSrc(objectUrl);
       setHasPreview(true);
     } catch (err: any) {
       setError(err?.message || 'Failed to render the banner preview.');
       setHasPreview(false);
+      setSegmentationStatus('unavailable');
     } finally {
       setRendering(false);
     }
@@ -393,6 +434,23 @@ export default function InstagramBannerPanel({ generationId, editorialPackage, s
               Upload to Media Library
             </button>
           </div>
+
+          {/* Subject-over-text status -- informational only. A plain
+              banner (subject not composited over the text) is a normal,
+              acceptable outcome for a photo with no clear subject, not
+              an error -- so this never renders with error styling. */}
+          {segmentationStatus !== 'idle' && (
+            <div className="text-[9px] uppercase tracking-widest text-zinc-500 flex items-center gap-2">
+              {segmentationStatus === 'analyzing' && (
+                <>
+                  <Loader2 className="animate-spin" size={11} /> Analyzing subject for text overlap...
+                </>
+              )}
+              {segmentationStatus === 'applied' && <>Subject-over-text: applied.</>}
+              {segmentationStatus === 'not-detected' && <>Subject-over-text: no clear subject found -- rendering flat.</>}
+              {segmentationStatus === 'unavailable' && <>Subject-over-text: unavailable -- rendering flat.</>}
+            </div>
+          )}
 
           {error && (
             <div className="flex items-center gap-2 text-rose-500 text-[10px]">
