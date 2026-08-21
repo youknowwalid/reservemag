@@ -135,6 +135,8 @@ export interface InstagramBannerParams {
   creditLine: string;
   /** News only. The exact substring of `headline` the admin wants rendered in red -- case-insensitive match, whole-word (never splits a word across two colors). Not found / empty => the whole headline draws in the base color. This is what makes the emphasis admin-controlled rather than a "last N words" heuristic -- see tokenizeWithEmphasis(). */
   emphasisPhrase?: string;
+  /** News only. Which side the text column sits on -- 'text-left' (text column left, photo column right) or 'text-right' (mirrored). Defaults to 'text-left'. Only swaps the two content columns; the header (logo/URL/divider) and footer (source line) never move regardless of this setting. */
+  newsLayout?: 'text-left' | 'text-right';
   /** Cover-fit focal point, 0-100 per axis (same semantics as CSS object-position -- 50/50 is centered, matching the article editor's crop tool). Defaults to 50/50 when omitted. */
   focalX?: number;
   focalY?: number;
@@ -541,8 +543,42 @@ export const NEWS_DEFAULT_COLORS: Record<'headline' | 'emphasis', string> = {
 
 const NEWS_HEADLINE_WEIGHT = 800; // Inter 800 -- see ensureFontsReady()
 
-/** Fixed photo box (right side of the news template) -- see the template spec's "confined to a fixed box" requirement. Exported so InstagramBannerPanel.tsx's FocalPointEditor can be given this exact aspect ratio (rather than the full-canvas ratio the editorial template's crop uses), so the crop preview matches what actually renders. */
-export const NEWS_PHOTO_BOX = { width: 380, height: 480 };
+// Two-column content area, between the fixed header (logo/URL/divider)
+// and footer (source line) -- both columns span this ENTIRE height, not
+// just a portion of it (the earlier bug: text and photo were both
+// crammed into the top third with a large empty area below). Computed
+// from fixed layout constants only (not from image/headline content), so
+// they can be exported as plain numbers for InstagramBannerPanel.tsx's
+// FocalPointEditor aspect ratio, same as the old fixed NEWS_PHOTO_BOX was.
+const NEWS_HEADER_HEIGHT = 56 + 64 + 24; // topY + default logoSize + gap-to-divider, matches dividerY below when the logo isn't manually resized
+const NEWS_CONTENT_TOP = NEWS_HEADER_HEIGHT + 48;
+const NEWS_FOOTER_RESERVE = 100; // space reserved for the source line + bottom margin
+const NEWS_CONTENT_BOTTOM = BANNER_HEIGHT - NEWS_FOOTER_RESERVE;
+const NEWS_COLUMN_GAP = 40;
+const NEWS_CONTENT_WIDTH = BANNER_WIDTH - MARGIN * 2;
+export const NEWS_COLUMN_WIDTH = (NEWS_CONTENT_WIDTH - NEWS_COLUMN_GAP) / 2;
+export const NEWS_COLUMN_HEIGHT = NEWS_CONTENT_BOTTOM - NEWS_CONTENT_TOP;
+
+/** Photo column's box dimensions -- exported so InstagramBannerPanel.tsx's FocalPointEditor can be given this exact aspect ratio (rather than the full-canvas ratio the editorial template's crop uses), so the crop preview matches what actually renders. Kept as a named object (not just the two consts above) to minimize churn at that call site. */
+export const NEWS_PHOTO_BOX = { width: NEWS_COLUMN_WIDTH, height: NEWS_COLUMN_HEIGHT };
+
+/**
+ * Resolves which side the text/photo columns sit on for a given
+ * `newsLayout` value -- 'text-left' (default, including undefined) puts
+ * the text column at MARGIN and the photo column to its right; 'text-right'
+ * mirrors both. Pure arithmetic on fixed layout constants, no canvas
+ * involved, so it's exported for direct unit testing
+ * (scripts/test-news-banner-template.ts) alongside tokenizeWithEmphasis
+ * and computeCoverFit -- the header/footer are never part of this, by
+ * design (they're drawn at fixed positions regardless of newsLayout).
+ */
+export function computeNewsColumnPositions(newsLayout: 'text-left' | 'text-right' | undefined): { textColumnX: number; imageColumnX: number } {
+  const textLeft = (newsLayout ?? 'text-left') !== 'text-right';
+  return {
+    textColumnX: textLeft ? MARGIN : MARGIN + NEWS_COLUMN_WIDTH + NEWS_COLUMN_GAP,
+    imageColumnX: textLeft ? MARGIN + NEWS_COLUMN_WIDTH + NEWS_COLUMN_GAP : MARGIN,
+  };
+}
 
 export interface EmphasisWord {
   word: string;
@@ -611,22 +647,39 @@ function wrapEmphasisWordsToLines(ctx: CanvasRenderingContext2D, words: Emphasis
   return lines;
 }
 
-/** Shrinks the news headline font size until it wraps within `maxLines`, down to `minSize` -- same shrink-to-fit strategy as fitHeadline(), adapted for the {word, emphasized} token list. */
-function fitNewsHeadline(
+/**
+ * Finds the LARGEST font size (scanning down from maxSize) at which the
+ * headline both wraps within `maxWidth` AND its full wrapped block --
+ * `lines.length * lineHeight` -- fits within `maxHeight`. This is what
+ * makes a short headline actually fill the column (a 2-word headline
+ * gets a much larger size than a 12-word one, rather than both landing
+ * on the same fixed size) instead of floating small at a size tuned for
+ * the longest expected headline. If even `minSize` still overflows
+ * `maxHeight`, that size is used anyway with however many lines it takes
+ * -- never truncates the text, matching fitHeadline()'s existing
+ * never-crop convention (the block will simply run past the column's
+ * bottom edge into the footer's reserved margin in that extreme case,
+ * rather than silently dropping words).
+ */
+function fitNewsHeadlineToColumn(
   ctx: CanvasRenderingContext2D,
   words: EmphasisWord[],
   maxWidth: number,
-  maxLines: number,
+  maxHeight: number,
   maxSize: number,
   minSize: number,
-): { fontSize: number; lines: EmphasisWord[][] } {
-  for (let size = maxSize; size >= minSize; size -= 4) {
+): { fontSize: number; lines: EmphasisWord[][]; lineHeight: number; blockHeight: number } {
+  for (let size = maxSize; size >= minSize; size -= 2) {
     ctx.font = `${NEWS_HEADLINE_WEIGHT} ${size}px "${FONT_SANS}"`;
     const lines = wrapEmphasisWordsToLines(ctx, words, maxWidth);
-    if (lines.length <= maxLines) return { fontSize: size, lines };
+    const lineHeight = size * 1.12;
+    const blockHeight = lines.length * lineHeight;
+    if (blockHeight <= maxHeight) return { fontSize: size, lines, lineHeight, blockHeight };
   }
   ctx.font = `${NEWS_HEADLINE_WEIGHT} ${minSize}px "${FONT_SANS}"`;
-  return { fontSize: minSize, lines: wrapEmphasisWordsToLines(ctx, words, maxWidth) };
+  const lines = wrapEmphasisWordsToLines(ctx, words, maxWidth);
+  const lineHeight = minSize * 1.12;
+  return { fontSize: minSize, lines, lineHeight, blockHeight: lines.length * lineHeight };
 }
 
 /** Draws one wrapped headline line, switching fillStyle per word run (base vs. emphasis color) -- a trailing space is included on every word but the line's last so runs of the same color still read as one continuous phrase, not visibly separate fillText calls. */
@@ -686,44 +739,61 @@ function renderNewsTemplate(
   ctx.lineTo(BANNER_WIDTH - MARGIN, dividerY);
   ctx.stroke();
 
-  // 3. Photo box -- confined to a fixed box on the right, not full-bleed.
-  // Same cover-fit + focal-point math as the editorial template's
-  // full-canvas photo (computeCoverFit), just clipped to this box.
-  const boxX = BANNER_WIDTH - MARGIN - NEWS_PHOTO_BOX.width;
-  const boxY = dividerY + 48;
+  // 3. Two full-height columns between the header and footer -- text and
+  // photo each span the entire remaining height (NEWS_CONTENT_TOP to
+  // NEWS_CONTENT_BOTTOM), not just the top portion. `newsLayout` decides
+  // which side each sits on ('text-left' default, or 'text-right'
+  // mirrored) -- the header/footer drawn above/below never move either
+  // way, only these two columns swap.
+  const { textColumnX, imageColumnX } = computeNewsColumnPositions(params.newsLayout);
+
+  // 3a. Photo column -- full-bleed within its column (cover-fit + focal
+  // point, same computeCoverFit() math as the editorial template's
+  // full-canvas photo), spanning the column's entire height rather than a
+  // small box floating near the top.
   const focalX = params.focalX ?? 50;
   const focalY = params.focalY ?? 50;
   ctx.save();
   ctx.beginPath();
-  ctx.rect(boxX, boxY, NEWS_PHOTO_BOX.width, NEWS_PHOTO_BOX.height);
+  ctx.rect(imageColumnX, NEWS_CONTENT_TOP, NEWS_COLUMN_WIDTH, NEWS_COLUMN_HEIGHT);
   ctx.clip();
-  const fit = computeCoverFit(img.width, img.height, NEWS_PHOTO_BOX.width, NEWS_PHOTO_BOX.height, focalX, focalY);
-  ctx.drawImage(img, boxX + fit.drawX, boxY + fit.drawY, fit.drawWidth, fit.drawHeight);
+  const fit = computeCoverFit(img.width, img.height, NEWS_COLUMN_WIDTH, NEWS_COLUMN_HEIGHT, focalX, focalY);
+  ctx.drawImage(img, imageColumnX + fit.drawX, NEWS_CONTENT_TOP + fit.drawY, fit.drawWidth, fit.drawHeight);
   ctx.restore();
   ctx.strokeStyle = NEWS_BLACK;
   ctx.lineWidth = 2;
-  ctx.strokeRect(boxX, boxY, NEWS_PHOTO_BOX.width, NEWS_PHOTO_BOX.height);
+  ctx.strokeRect(imageColumnX, NEWS_CONTENT_TOP, NEWS_COLUMN_WIDTH, NEWS_COLUMN_HEIGHT);
 
-  // 4. Headline -- bold black all-caps sans, left column left of the photo
-  // box, auto-wrapping, with the admin-controlled emphasis phrase in red.
-  const headlineMaxWidth = boxX - MARGIN - 32;
+  // 3b. Headline -- bold black all-caps sans, filling the text column's
+  // full height/width (fitNewsHeadlineToColumn scales UP for a short
+  // headline, down for a long one -- same auto-fit principle as the
+  // editorial masthead's fitTextToWidth, tuned for a tall column instead
+  // of a wide strip), vertically centered in the column rather than
+  // pinned to the top. Admin-controlled emphasis phrase renders in red.
   if (params.headline.trim()) {
     const words = tokenizeWithEmphasis(params.headline, params.emphasisPhrase ?? '');
     let fontSize: number;
     let lines: EmphasisWord[][];
+    let lineHeight: number;
+    let blockHeight: number;
     if (overrides.headline?.fontSize) {
       fontSize = overrides.headline.fontSize;
       ctx.font = `${NEWS_HEADLINE_WEIGHT} ${fontSize}px "${FONT_SANS}"`;
-      lines = wrapEmphasisWordsToLines(ctx, words, headlineMaxWidth);
+      lines = wrapEmphasisWordsToLines(ctx, words, NEWS_COLUMN_WIDTH);
+      lineHeight = fontSize * 1.12;
+      blockHeight = lines.length * lineHeight;
     } else {
-      ({ fontSize, lines } = fitNewsHeadline(ctx, words, headlineMaxWidth, 6, 72, 36));
+      ({ fontSize, lines, lineHeight, blockHeight } = fitNewsHeadlineToColumn(ctx, words, NEWS_COLUMN_WIDTH, NEWS_COLUMN_HEIGHT, 160, 32));
     }
     ctx.font = `${NEWS_HEADLINE_WEIGHT} ${fontSize}px "${FONT_SANS}"`;
-    const lineHeight = fontSize * 1.12;
-    const headlineX = MARGIN + (overrides.headline?.offsetX ?? 0);
+    const headlineX = textColumnX + (overrides.headline?.offsetX ?? 0);
     const baseColor = overrides.headline?.color ?? NEWS_BLACK;
     const emphasisColor = overrides.emphasis?.color ?? NEWS_RED;
-    let y = boxY + fontSize + (overrides.headline?.offsetY ?? 0);
+    // Vertically centered in the column: first baseline sits far enough
+    // down from the centered block's top to clear the first line's
+    // glyphs (the same cap-height rule of thumb as the editorial
+    // template's ascent() helper), not at the block's raw top edge.
+    let y = NEWS_CONTENT_TOP + (NEWS_COLUMN_HEIGHT - blockHeight) / 2 + fontSize * 0.78 + (overrides.headline?.offsetY ?? 0);
     for (const line of lines) {
       drawEmphasisLine(ctx, line, headlineX, y, baseColor, emphasisColor);
       y += lineHeight;
