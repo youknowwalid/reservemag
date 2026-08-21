@@ -44,9 +44,13 @@ export default function Footer() {
             <div className="grid grid-cols-2 gap-x-8 gap-y-4">
               {[
                 'Navigation', 'Digital Archive', 'Editorial Policy',
-                'Editorial Board', 'Advertising', 'Legal'
+                'Editorial Board', 'Advertising', 'Legal', 'Become a Contributor'
               ].map((label) => {
-                const url = siteSettings?.footerUrls?.[label] || '/';
+                // Every other label here falls back to '/' when unset in
+                // siteSettings -- this one falls back to /contribute
+                // specifically, same pattern as the Navbar CTA's own
+                // ctaButton.url fallback to /get-featured.
+                const url = siteSettings?.footerUrls?.[label] || (label === 'Become a Contributor' ? '/contribute' : '/');
                 const isInternal = url.startsWith('/');
                 
                 return (
