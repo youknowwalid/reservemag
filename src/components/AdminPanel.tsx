@@ -4,7 +4,7 @@ import {
   LayoutDashboard, FileText, Settings, LogOut,
   ChevronRight, Shield, Layout as HomepageIcon,
   Circle, Mail, Briefcase, Video, Layers, Users, Database,
-  Newspaper, Rss
+  Newspaper, Rss, UserPlus
 } from 'lucide-react';
 import { useSupabase } from '../context/SupabaseContext';
 import { logout } from '../lib/supabase';
@@ -25,6 +25,7 @@ import SpreadsheetImportSection from './admin/SpreadsheetImportSection';
 import AIConnectionTestPanel from './admin/AIConnectionTestPanel';
 import SourceRetrievalTestPanel from './admin/SourceRetrievalTestPanel';
 import EditorialGenerationPanel from './admin/EditorialGenerationPanel';
+import ContributorsSection from './admin/ContributorsSection';
 
 export default function AdminPanel() {
   const { user } = useSupabase();
@@ -44,6 +45,10 @@ export default function AdminPanel() {
     { id: 'bulk-import', label: 'Bulk Import', icon: Database },
     { id: 'categories', label: 'Categories', icon: Layers },
     { id: 'authors', label: 'Authors', icon: Users },
+    // Distinct from "Authors" above -- that's the small, manually
+    // curated byline registry; this is the self-registered "Become a
+    // Contributor" signup directory (contributors table).
+    { id: 'contributors', label: 'Contributors', icon: UserPlus },
     { id: 'videos', label: 'Video Interviews', icon: Video },
     { id: 'leads', label: 'Lead Requests', icon: Briefcase },
     { id: 'newsletter', label: 'Newsletter', icon: Mail },
@@ -80,6 +85,7 @@ export default function AdminPanel() {
       );
       case 'categories': return <CategorySection />;
       case 'authors': return <AuthorsSection />;
+      case 'contributors': return <ContributorsSection />;
       case 'videos': return <VideoSection />;
       case 'newsletter': return <NewsletterSection />;
       case 'leads': return <LeadSection />;

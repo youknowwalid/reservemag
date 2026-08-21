@@ -29,6 +29,38 @@ export interface Author {
   createdAt?: any;
 }
 
+/** Single-select, confirmed with the requester rather than assumed multi-select. Matches the `contributors.category` check constraint (migration: add_contributors). */
+export type ContributorCategory = 'journalist' | 'photographer' | 'videographer' | 'other';
+
+/**
+ * A self-registered "Become a Contributor" account -- entirely separate
+ * from `Author` above (the admin-managed byline registry used for
+ * article credit) and from admin accounts (`admin_users`/is_admin()). A
+ * contributor's `id` is their Supabase Auth `auth.uid()`; the row is
+ * created once, on profile completion (see contributorService.ts), with
+ * no partial/draft state -- Stage 1 treats profile completion as
+ * all-or-nothing, so every field here is required at creation time.
+ * `status` defaults to 'active' (no vetting gate) and exists for a
+ * future moderation stage that hasn't been built yet -- nothing in Stage
+ * 1 reads or branches on it.
+ */
+export interface Contributor {
+  id: string;
+  email: string;
+  fullName: string;
+  phoneNumber: string;
+  category: ContributorCategory;
+  profilePhotoUrl: string;
+  /** Keyed by platform so the (not-yet-built) public author card can render the right icon per URL without a schema change. `instagram` is required at the application layer; every other key is optional. */
+  socialMediaUrls: {
+    instagram: string;
+    twitter?: string;
+    website?: string;
+  };
+  status: string;
+  createdAt: string;
+}
+
 export interface Article {
   id?: string;
   slug: string;
