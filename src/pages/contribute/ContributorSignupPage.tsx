@@ -1,31 +1,32 @@
-import React, { useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
-import { Loader2, Mail } from 'lucide-react';
+import React, { useState } from 'react';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { Loader2 } from 'lucide-react';
 import Navbar from '../../components/Navbar';
 import Footer from '../../components/Footer';
 import { useContributor } from '../../context/ContributorContext';
 import { signUpContributor, signInContributor, signInContributorWithGoogle } from '../../lib/contributorAuth';
-import { supabase } from '../../lib/supabase';
+import { resolveSignupPageRedirect } from '../../lib/contributorRouting';
 
-// Step 1 of "Become a Contributor" -- account creation. Email+password
-// (Supabase Auth's own signUp/signInWithPassword) or Google OAuth
-// (signInWithOAuth). Purely account creation -- profile completion is a
-// separate step/page (ContributorProfilePage), gated on having a session
-// but no `contributors` row yet.
+// Step 1 of "Become a Contributor" -- account creation ONLY (email +
+// password, or Google). No name/phone/category/photo here -- those
+// belong to Step 3 (ContributorProfilePage), which is itself gated
+// behind Step 2 (ContributorVerifyEmailPage). This page's only job after
+// a successful signup is to hand off to that verification gate; it does
+// NOT decide by itself whether the contributor is verified.
 
 export default function ContributorSignupPage() {
-  const { user, contributor, loading } = useContributor();
+  const { user, contributor, emailConfirmed, loading } = useContributor();
+  const navigate = useNavigate();
   const [mode, setMode] = useState<'signup' | 'signin'>('signup');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
 
-  // Already fully set up -- nothing to do here.
-  if (!loading && user && contributor) return <Navigate to="/contribute/dashboard" replace />;
-  // Signed in but profile not completed yet -- skip straight past signup.
-  if (!loading && user && !contributor) return <Navigate to="/contribute/profile" replace />;
+  if (!loading) {
+    const redirect = resolveSignupPageRedirect({ hasUser: Boolean(user), emailConfirmed, hasContributor: Boolean(contributor) });
+    if (redirect) return <Navigate to={redirect} replace />;
+  }
 
   const handleEmailPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,16 +43,18 @@ export default function ContributorSignupPage() {
     try {
       if (mode === 'signup') {
         await signUpContributor(email.trim(), password);
-        // Whether a session is issued immediately depends on this
-        // project's "Confirm email" setting -- check rather than assume.
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) setAwaitingConfirmation(true);
-        // If a session WAS issued, the ContributorContext listener above
-        // picks it up and the redirect at the top of this component
-        // takes over on the next render.
-      } else {
-        await signInContributor(email.trim(), password);
+        // Always hand off to the verification gate next -- regardless of
+        // whether an (unconfirmed) session was issued immediately or
+        // not, ContributorVerifyEmailPage is what decides what happens
+        // next, not this page. The pending email is passed via route
+        // state for the case where no session exists yet to read it
+        // from.
+        navigate('/contribute/verify-email', { state: { email: email.trim() } });
+        return;
       }
+      await signInContributor(email.trim(), password);
+      // A returning contributor's redirect is handled by the guard
+      // above once ContributorContext picks up the new session.
     } catch (err: any) {
       setError(err?.message || 'Something went wrong. Please try again.');
     } finally {
@@ -68,22 +71,6 @@ export default function ContributorSignupPage() {
       setError(err?.message || 'Google sign-in is not available right now.');
     }
   };
-
-  if (awaitingConfirmation) {
-    return (
-      <div className="bg-reserve-bg min-h-screen text-reserve-text">
-        <Navbar />
-        <div className="max-w-md mx-auto px-6 py-32 text-center space-y-6">
-          <Mail className="mx-auto text-reserve-accent" size={40} />
-          <h1 className="text-2xl font-serif">Check your email</h1>
-          <p className="text-sm text-zinc-400 leading-relaxed">
-            We sent a confirmation link to <strong className="text-white">{email}</strong>. Click it, then come back here to finish setting up your profile.
-          </p>
-        </div>
-        <Footer />
-      </div>
-    );
-  }
 
   return (
     <div className="bg-reserve-bg min-h-screen text-reserve-text">

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useContributor } from '../../context/ContributorContext';
+import { resolveDashboardGuardRedirect } from '../../lib/contributorRouting';
 
 // Guards /contribute/dashboard. Deliberately its own component, not a
 // reused/parameterized version of AdminPanel's ProtectedRoute
@@ -9,7 +10,7 @@ import { useContributor } from '../../context/ContributorContext';
 // correctly redirected to sign up like anyone else, and a contributor
 // session can never satisfy this by any admin-side property.
 export default function ContributorProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, contributor, loading } = useContributor();
+  const { user, contributor, emailConfirmed, loading } = useContributor();
 
   if (loading) {
     return (
@@ -19,8 +20,8 @@ export default function ContributorProtectedRoute({ children }: { children: Reac
     );
   }
 
-  if (!user) return <Navigate to="/contribute" replace />;
-  if (!contributor) return <Navigate to="/contribute/profile" replace />;
+  const redirect = resolveDashboardGuardRedirect({ hasUser: Boolean(user), emailConfirmed, hasContributor: Boolean(contributor) });
+  if (redirect) return <Navigate to={redirect} replace />;
 
   return <>{children}</>;
 }

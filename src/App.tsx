@@ -15,6 +15,7 @@ import AdminLogin from './components/AdminLogin';
 import ArticlePage from './pages/ArticlePage';
 import GetFeaturedPage from './pages/GetFeaturedPage';
 import ContributorSignupPage from './pages/contribute/ContributorSignupPage';
+import ContributorVerifyEmailPage from './pages/contribute/ContributorVerifyEmailPage';
 import ContributorProfilePage from './pages/contribute/ContributorProfilePage';
 import ContributorDashboardPage from './pages/contribute/ContributorDashboardPage';
 import ContributorProtectedRoute from './components/contribute/ContributorProtectedRoute';
@@ -218,6 +219,7 @@ export default function App() {
                 SupabaseContext's isAdmin) drives access here; see
                 ContributorProtectedRoute's doc comment. */}
             <Route path="/contribute" element={<ContributorSignupPage />} />
+            <Route path="/contribute/verify-email" element={<ContributorVerifyEmailPage />} />
             <Route path="/contribute/profile" element={<ContributorProfilePage />} />
             <Route
               path="/contribute/dashboard"

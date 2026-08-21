@@ -66,13 +66,19 @@ export default function Navbar() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 md:gap-6 flex-shrink-0 ml-4">
-            <Link 
+            <Link
+              to="/contribute"
+              className="hidden sm:flex items-center gap-2 px-3 sm:px-4 md:px-6 py-2 border border-reserve-border rounded-full text-[9px] sm:text-[10px] md:text-[11px] uppercase tracking-widest whitespace-nowrap hover:bg-reserve-text hover:text-reserve-bg transition-all duration-300 flex-shrink-0"
+            >
+              Become a Contributor
+            </Link>
+            <Link
               to={siteSettings?.ctaButton.url || '/get-featured'}
               className="flex items-center gap-2 px-3 sm:px-4 md:px-6 py-2 border border-reserve-border rounded-full text-[9px] sm:text-[10px] md:text-[11px] uppercase tracking-widest whitespace-nowrap hover:bg-reserve-text hover:text-reserve-bg transition-all duration-300 flex-shrink-0"
             >
               {siteSettings?.ctaButton.text || 'Get Featured'}
             </Link>
-            <button 
+            <button
               onClick={() => setIsMenuOpen(true)}
               className="md:hidden text-reserve-text hover:text-reserve-accent transition-colors p-1.5 sm:p-2"
             >
@@ -127,6 +133,8 @@ export default function Navbar() {
                   <a href={siteSettings?.socialUrls?.instagram || '#'} target="_blank" rel="noreferrer" className="text-xs hover:text-reserve-accent transition-colors">Instagram</a>
                   <a href={siteSettings?.socialUrls?.facebook || '#'} target="_blank" rel="noreferrer" className="text-xs hover:text-reserve-accent transition-colors">Facebook</a>
                   <Link to="/archive" className="text-xs hover:text-reserve-accent transition-colors">Archive</Link>
+                  {/* Reachable here on small screens, where the navbar's own "Become a Contributor" pill is hidden (sm:flex) for space. */}
+                  <Link to="/contribute" className="text-xs hover:text-reserve-accent transition-colors" onClick={() => setIsMenuOpen(false)}>Become a Contributor</Link>
                 </div>
               </div>
             </div>
