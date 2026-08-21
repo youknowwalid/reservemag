@@ -154,3 +154,52 @@ export async function verifyAdminRequest(
 
   return { ok: true, userId: userData.user.id, client: scopedClient };
 }
+
+export type ContributorAuthResult =
+  | { ok: true; userId: string; contributorId: string; client: SupabaseClient }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Verifies that a request carries a valid Supabase session belonging to
+ * a REGISTERED contributor (a `contributors` row with a matching
+ * auth_user_id) -- the contributor-side equivalent of verifyAdminRequest
+ * above, for gating server-side contributor-only actions (submission
+ * media upload). Deliberately a separate function, not a parameterized
+ * version of verifyAdminRequest: this checks contributors table
+ * membership, never is_admin(), so an admin session with no contributor
+ * profile is correctly rejected here just like anyone else, and this
+ * function can never be satisfied by any admin-side property. Same
+ * client-reuse contract as verifyAdminRequest -- callers writing to a
+ * contributor-scoped RLS table MUST reuse the returned `client`.
+ */
+export async function verifyContributorRequest(
+  req: { headers: IncomingHttpHeaders },
+  deps: { createClient?: typeof createClient } = {},
+): Promise<ContributorAuthResult> {
+  const createSupabaseClient = deps.createClient ?? createClient;
+
+  const authHeader = req.headers['authorization'];
+  const headerValue = Array.isArray(authHeader) ? authHeader[0] : authHeader;
+  const token = headerValue?.startsWith('Bearer ') ? headerValue.slice('Bearer '.length).trim() : null;
+  if (!token) return { ok: false, status: 401, error: 'Missing session token.' };
+
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return { ok: false, status: 500, error: 'Supabase is not configured on the server.' };
+  }
+
+  const scopedClient = createSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+
+  const { data: userData, error: userError } = await scopedClient.auth.getUser(token);
+  if (userError || !userData?.user) return { ok: false, status: 401, error: 'Invalid or expired session.' };
+
+  const { data: contributorRow, error: contributorError } = await scopedClient
+    .from('contributors')
+    .select('id')
+    .eq('auth_user_id', userData.user.id)
+    .maybeSingle();
+  if (contributorError || !contributorRow) return { ok: false, status: 403, error: 'A completed contributor profile is required.' };
+
+  return { ok: true, userId: userData.user.id, contributorId: (contributorRow as { id: string }).id, client: scopedClient };
+}

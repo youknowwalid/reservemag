@@ -16,7 +16,7 @@
 // avoids that route) -- exercised manually instead, via the admin panel's
 // live preview.
 
-import { tokenizeWithEmphasis, computeCoverFit } from '../src/lib/instagramBannerRenderer';
+import { tokenizeWithEmphasis, computeCoverFit, computeNewsColumnPositions, NEWS_COLUMN_WIDTH, NEWS_COLUMN_HEIGHT, BANNER_WIDTH, BANNER_HEIGHT } from '../src/lib/instagramBannerRenderer';
 
 let passed = 0;
 let failed = 0;
@@ -127,6 +127,37 @@ function testCoverFitNoCropWhenAspectMatches() {
   assert(fit.drawWidth === 400 && fit.drawHeight === 200, 'scales down exactly to the box size', fit);
 }
 
+// ---------------------------------------------------------------------------
+// computeNewsColumnPositions / full-height column geometry
+// ---------------------------------------------------------------------------
+
+function testColumnPositionsDefaultTextLeft() {
+  console.log('\n=== computeNewsColumnPositions: default (undefined) is text-left, image-right ===');
+  const explicit = computeNewsColumnPositions('text-left');
+  const implicit = computeNewsColumnPositions(undefined);
+  assert(JSON.stringify(implicit) === JSON.stringify(explicit), 'omitting newsLayout behaves identically to explicit "text-left"', { implicit, explicit });
+  assert(implicit.textColumnX < implicit.imageColumnX, 'text column sits to the left of the image column by default', implicit);
+}
+
+function testColumnPositionsFlipped() {
+  console.log('\n=== computeNewsColumnPositions: text-right mirrors the columns ===');
+  const leftLayout = computeNewsColumnPositions('text-left');
+  const rightLayout = computeNewsColumnPositions('text-right');
+  assert(rightLayout.textColumnX > rightLayout.imageColumnX, 'text column sits to the right of the image column when flipped', rightLayout);
+  assert(rightLayout.textColumnX === leftLayout.imageColumnX, 'flipping swaps the text column onto the exact X the image column used', { leftLayout, rightLayout });
+  assert(rightLayout.imageColumnX === leftLayout.textColumnX, 'flipping swaps the image column onto the exact X the text column used', { leftLayout, rightLayout });
+}
+
+function testColumnGeometrySane() {
+  console.log('\n=== NEWS_COLUMN_WIDTH/HEIGHT -- full-height columns, not a small floating box ===');
+  assert(NEWS_COLUMN_WIDTH > 0 && NEWS_COLUMN_WIDTH < BANNER_WIDTH, 'column width is positive and fits within the banner', NEWS_COLUMN_WIDTH);
+  // The old (buggy) fixed photo box was 480px tall -- the fix must make
+  // the column meaningfully taller than that, filling most of the
+  // banner's 1350px height rather than floating in the top third.
+  assert(NEWS_COLUMN_HEIGHT > 900, 'column height fills most of the banner height, not just the top third', { NEWS_COLUMN_HEIGHT, BANNER_HEIGHT });
+  assert(NEWS_COLUMN_HEIGHT < BANNER_HEIGHT, 'column height still leaves room for the fixed header and footer', NEWS_COLUMN_HEIGHT);
+}
+
 async function main() {
   testNoEmphasisPhrase();
   testSimpleTrailingPhrase();
@@ -138,6 +169,9 @@ async function main() {
   testCoverFitCenteredSquareIntoLandscape();
   testCoverFitFocalPointExtremes();
   testCoverFitNoCropWhenAspectMatches();
+  testColumnPositionsDefaultTextLeft();
+  testColumnPositionsFlipped();
+  testColumnGeometrySane();
 
   console.log(`\n=== SUMMARY === ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

@@ -80,7 +80,7 @@ const DEFAULT_OVERRIDES: Required<InstagramBannerOverrides> = {
   emphasis: EMPTY_OVERRIDE,
 };
 
-/** What gets saved to recordTable.instagram_banner_config -- everything needed to reproduce this exact banner on reopen, not just the resulting image. `overrides` already carries each element's `color` (see ElementOverride), so no separate color field is needed here. `template`/`emphasisPhrase` are optional so a banner saved before the News template existed still loads fine (falls back to 'editorial'/'' -- see the restore effect). */
+/** What gets saved to recordTable.instagram_banner_config -- everything needed to reproduce this exact banner on reopen, not just the resulting image. `overrides` already carries each element's `color` (see ElementOverride), so no separate color field is needed here. `template`/`emphasisPhrase`/`newsLayout` are optional so a banner saved before these existed still loads fine (falls back to 'editorial'/''/'text-left' -- see the restore effect). */
 interface SavedBannerConfig {
   template?: BannerTemplate;
   kicker: string;
@@ -88,6 +88,8 @@ interface SavedBannerConfig {
   headline: string;
   creditLine: string;
   emphasisPhrase?: string;
+  /** News only. Which side the text column sits on -- see InstagramBannerParams's newsLayout doc comment (instagramBannerRenderer.ts). */
+  newsLayout?: 'text-left' | 'text-right';
   imageUrl: string;
   focalX: number;
   focalY: number;
@@ -212,6 +214,10 @@ export default function InstagramBannerPanel({
   // "last N words" guess: the spec is explicit that this must be fully
   // admin-controlled, not a heuristic that might grab the wrong phrase.
   const [emphasisPhrase, setEmphasisPhrase] = useState('');
+  // News template only -- which side the text column sits on. Defaults to
+  // 'text-left' on a new banner (not toggled), and is freely switchable
+  // per-banner via the toggle below regardless of that default.
+  const [newsLayout, setNewsLayout] = useState<'text-left' | 'text-right'>('text-left');
   const [imageUrl, setImageUrl] = useState(editorialPackage.imageUrl);
   // Cover-fit focal point (0-100 per axis, same semantics as CSS
   // object-position -- see FocalPointEditor and
@@ -300,6 +306,7 @@ export default function InstagramBannerPanel({
         setSubtitle(saved.subtitle ?? subtitle);
         setHeadline(saved.headline ?? headline);
         setEmphasisPhrase(saved.emphasisPhrase ?? '');
+        setNewsLayout(saved.newsLayout ?? 'text-left');
         setCreditLine(saved.creditLine ?? creditLine);
         setImageUrl(saved.imageUrl ?? imageUrl);
         setFocalX(saved.focalX ?? 50);
@@ -327,6 +334,7 @@ export default function InstagramBannerPanel({
       subtitle,
       headline,
       emphasisPhrase,
+      newsLayout,
       creditLine,
       focalX,
       focalY,
@@ -397,7 +405,7 @@ export default function InstagramBannerPanel({
     if (!hasPreview || !objectUrlRef.current) return;
     renderFromSrc(objectUrlRef.current).catch((err) => setError(err?.message || 'Failed to update the preview.'));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- renderFromSrc closes over the latest state already; re-running on those same state changes is the point
-  }, [template, kicker, subtitle, headline, emphasisPhrase, creditLine, focalX, focalY, overrides, hasPreview]);
+  }, [template, kicker, subtitle, headline, emphasisPhrase, newsLayout, creditLine, focalX, focalY, overrides, hasPreview]);
 
   const downloadPng = async () => {
     const canvas = canvasRef.current;
@@ -433,7 +441,7 @@ export default function InstagramBannerPanel({
       const publicUrl = await bannerUploadService.uploadRenderedBanner(blob, recordId);
 
       if (recordId) {
-        const config: SavedBannerConfig = { template, kicker, subtitle, headline, emphasisPhrase, creditLine, imageUrl, focalX, focalY, overrides };
+        const config: SavedBannerConfig = { template, kicker, subtitle, headline, emphasisPhrase, newsLayout, creditLine, imageUrl, focalX, focalY, overrides };
         const { error: dbError } = await supabase
           .from(recordTable)
           .update({ instagram_banner_url: publicUrl, instagram_banner_config: config })
@@ -544,18 +552,41 @@ export default function InstagramBannerPanel({
             <input className="w-full bg-black border border-white/10 p-3 text-xs" value={headline} onChange={(e) => setHeadline(e.target.value)} maxLength={80} />
           </div>
           {template === 'news' && (
-            <div className="space-y-1">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-600 block">
-                Emphasis phrase -- the exact words from the headline above to render in red
-              </label>
-              <input
-                className="w-full bg-black border border-white/10 p-3 text-xs"
-                value={emphasisPhrase}
-                onChange={(e) => setEmphasisPhrase(e.target.value)}
-                maxLength={80}
-                placeholder="e.g. the final clause of the headline"
-              />
-            </div>
+            <>
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase tracking-widest text-zinc-600 block">
+                  Emphasis phrase -- the exact words from the headline above to render in red
+                </label>
+                <input
+                  className="w-full bg-black border border-white/10 p-3 text-xs"
+                  value={emphasisPhrase}
+                  onChange={(e) => setEmphasisPhrase(e.target.value)}
+                  maxLength={80}
+                  placeholder="e.g. the final clause of the headline"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase tracking-widest text-zinc-600 block">Layout</label>
+                <div className="flex gap-2">
+                  {(
+                    [
+                      { value: 'text-left' as const, label: 'Text Left / Image Right' },
+                      { value: 'text-right' as const, label: 'Text Right / Image Left' },
+                    ]
+                  ).map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => setNewsLayout(option.value)}
+                      className={`flex-1 px-3 py-2.5 text-[9px] uppercase tracking-widest border transition-all ${
+                        newsLayout === option.value ? 'bg-white text-black border-white' : 'border-white/10 text-zinc-500 hover:text-white'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
           )}
           <div className="space-y-1">
             <label className="text-[9px] uppercase tracking-widest text-zinc-600 block">{template === 'news' ? 'Source line' : 'Credit line'}</label>

@@ -10,7 +10,16 @@ import {
   getServerSupabaseInitError,
   insertArticleServer,
   verifyAdminRequest,
+  verifyContributorRequest,
 } from './server-supabase';
+// Turns an approved Submission into an articles row. Server-only, no
+// lib/supabase.ts import chain -- see its own header comment.
+import { buildArticleRowFromSubmission, rowToSubmission, rowToContributorForPublish } from './src/services/submissionPublishService';
+// Server-side backstop for the same size caps the contributor upload
+// form enforces client-side (src/lib/imageValidation.ts) -- never trust
+// the client alone for a file upload. Pure constants, no browser-only
+// import chain, safe to share between client and server code.
+import { SUBMISSION_PHOTO_MAX_BYTES, SUBMISSION_VIDEO_MAX_BYTES } from './src/lib/imageValidation';
 // Reserve Editorial Engine AI provider. Server-side only -- see
 // src/services/ai/index.ts. Do not call Tabitoken (or any other AI
 // backend) directly from route handlers; always go through this
@@ -409,6 +418,150 @@ export async function createApp() {
     } catch (error) {
       console.error('[Instagram Publish] Failed:', error);
       return res.status(502).json({ error: error instanceof Error ? error.message : 'Failed to publish to Instagram.' });
+    }
+  });
+
+  // ==========================================================================
+  // Stage 2 -- Contributor Submissions
+  // ==========================================================================
+
+  // Uploads one photo or video for a submission (photo_story/video content
+  // types). Contributor-gated (verifyContributorRequest, NOT
+  // verifyAdminRequest -- this is the one route in this file a non-admin
+  // can call). Reuses the exact same R2 client (uploadBannerToR2 /
+  // r2StorageService.ts) the Instagram banner upload uses -- one upload
+  // integration, not a second. Raw binary body like the banner upload
+  // route, but accepts either image/* or video/* (the `type` matcher
+  // accepts anything; the actual mime + size gate happens in the handler
+  // below so the two content types can have their own limits and their
+  // own specific error messages). Client-side validation
+  // (src/lib/imageValidation.ts) is the primary UX gate per the brief;
+  // this is the non-negotiable server-side backstop -- never trust the
+  // client alone for a file upload.
+  app.post(
+    '/api/contributor/submission-upload',
+    express.raw({ type: () => true, limit: '105mb' }),
+    async (req, res) => {
+      const auth = await verifyContributorRequest(req);
+      if (auth.ok === false) return res.status(auth.status).json({ error: auth.error });
+
+      if (!isR2Configured()) {
+        return res.status(503).json({
+          error: 'Media storage is not configured on the server (missing R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET_NAME / R2_PUBLIC_BASE_URL).',
+        });
+      }
+
+      const bytes = req.body;
+      if (!Buffer.isBuffer(bytes) || bytes.length === 0) {
+        return res.status(400).json({ error: 'A file body is required.' });
+      }
+
+      const contentType = String(req.headers['content-type'] || '');
+      const isVideo = contentType.startsWith('video/');
+      const isImage = contentType.startsWith('image/');
+      if (!isVideo && !isImage) {
+        return res.status(400).json({ error: 'Only image or video uploads are accepted (set Content-Type accordingly).' });
+      }
+
+      const maxBytes = isVideo ? SUBMISSION_VIDEO_MAX_BYTES : SUBMISSION_PHOTO_MAX_BYTES;
+      if (bytes.length > maxBytes) {
+        const maxMb = Math.round(maxBytes / (1024 * 1024));
+        return res.status(400).json({ error: `File too large. Maximum size is ${maxMb}MB for ${isVideo ? 'video' : 'photo'} uploads.` });
+      }
+
+      const extension = contentType.split('/')[1]?.replace(/[^a-z0-9]/gi, '') || (isVideo ? 'mp4' : 'jpg');
+      const key = `submissions/${auth.contributorId}/${Date.now()}.${extension}`;
+
+      try {
+        const url = await uploadBannerToR2(bytes, contentType, key);
+        return res.status(200).json({ url });
+      } catch (error) {
+        console.error('[Submission Upload] Failed:', error);
+        return res.status(502).json({ error: error instanceof Error ? error.message : 'Failed to upload the file.' });
+      }
+    },
+  );
+
+  // Approve & Publish / Reject / Request Revision -- the one admin review
+  // action, all three verdicts. Admin-gated. Approve builds a real
+  // `articles` row via buildArticleRowFromSubmission() and
+  // insertArticleServer() -- the SAME publish path Editorial/News Factory
+  // uses, not a second one -- then marks the submission
+  // approved_published and links it via published_article_id. Reject/
+  // revision require feedbackNote (enforced here, not just in the admin
+  // UI -- a contributor must never see a bare rejection). Every verdict
+  // creates a notification row for the contributor.
+  app.post('/api/admin/submissions/review', async (req, res) => {
+    const auth = await verifyAdminRequest(req);
+    if (auth.ok === false) return res.status(auth.status).json({ error: auth.error });
+
+    const { submissionId, action, feedbackNote } = req.body ?? {};
+    if (typeof submissionId !== 'string' || !submissionId.trim()) {
+      return res.status(400).json({ error: 'submissionId is required.' });
+    }
+    if (action !== 'approve' && action !== 'reject' && action !== 'revision') {
+      return res.status(400).json({ error: "action must be 'approve', 'reject', or 'revision'." });
+    }
+    if ((action === 'reject' || action === 'revision') && (typeof feedbackNote !== 'string' || !feedbackNote.trim())) {
+      return res.status(400).json({ error: 'A feedback note is required to reject or request revision.' });
+    }
+
+    const { data: submissionRow, error: fetchError } = await auth.client.from('submissions').select('*').eq('id', submissionId).maybeSingle();
+    if (fetchError || !submissionRow) return res.status(404).json({ error: 'Submission not found.' });
+    if (submissionRow.status !== 'submitted' && submissionRow.status !== 'under_review') {
+      return res.status(409).json({ error: `This submission is already "${submissionRow.status}" and cannot be reviewed again.` });
+    }
+
+    const { data: contributorRow, error: contributorError } = await auth.client
+      .from('contributors')
+      .select('*')
+      .eq('id', submissionRow.contributor_id)
+      .maybeSingle();
+    if (contributorError || !contributorRow) return res.status(500).json({ error: 'Could not load the submitting contributor.' });
+
+    const submission = rowToSubmission(submissionRow);
+    const contributor = rowToContributorForPublish(contributorRow);
+    const reviewedAt = new Date().toISOString();
+
+    try {
+      let notificationMessage: string;
+      const submissionPatch: Record<string, unknown> = { reviewed_by: auth.userId, reviewed_at: reviewedAt };
+
+      if (action === 'approve') {
+        const articleRow = buildArticleRowFromSubmission(submission, contributor);
+        const { id: articleId } = await insertArticleServer(articleRow);
+        submissionPatch.status = 'approved_published';
+        submissionPatch.published_article_id = articleId;
+        notificationMessage = `Your ${submission.contentType.replace('_', ' ')} "${submission.title}" was approved and published.`;
+      } else if (action === 'reject') {
+        submissionPatch.status = 'rejected';
+        submissionPatch.feedback_note = feedbackNote.trim();
+        notificationMessage = `Your ${submission.contentType.replace('_', ' ')} "${submission.title}" was rejected: ${feedbackNote.trim()}`;
+      } else {
+        submissionPatch.status = 'needs_revision';
+        submissionPatch.feedback_note = feedbackNote.trim();
+        notificationMessage = `Your ${submission.contentType.replace('_', ' ')} "${submission.title}" needs revision: ${feedbackNote.trim()}`;
+      }
+
+      const { error: updateError } = await auth.client.from('submissions').update(submissionPatch).eq('id', submissionId);
+      if (updateError) throw updateError;
+
+      const { error: notifyError } = await auth.client.from('notifications').insert({
+        contributor_id: submission.contributorId,
+        submission_id: submission.id,
+        message: notificationMessage,
+      });
+      // The review itself already succeeded even if the notification
+      // insert fails -- log it (non-fatal) rather than reporting the
+      // whole review as failed, matching this codebase's established
+      // non-fatal-secondary-write pattern (e.g. InstagramBannerPanel.tsx's
+      // banner-upload DB write).
+      if (notifyError) console.error('[Submission Review] Review succeeded but failed to create the notification:', notifyError);
+
+      return res.status(200).json({ status: submissionPatch.status });
+    } catch (error) {
+      console.error('[Submission Review] Failed:', error);
+      return res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to review this submission.' });
     }
   });
 
