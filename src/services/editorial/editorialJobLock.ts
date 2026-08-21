@@ -31,6 +31,8 @@ export interface EditorialJobLockInput {
   subject?: string;
   requestedAngle?: string;
   contentType?: string;
+  /** Included in the fingerprint so the same source URLs can run once for Editorial Factory and once for News Factory without the second being rejected as a duplicate -- they're genuinely different desired outputs (different banner), not a retry of the same request. */
+  bannerTemplate?: string;
 }
 
 /** Deterministic fingerprint for "is this the same generation request" -- order-insensitive on source URLs, case/whitespace-insensitive on every field. */
@@ -40,6 +42,7 @@ export function computeEditorialFingerprint(input: EditorialJobLockInput): strin
     subject: (input.subject || '').trim().toLowerCase(),
     requestedAngle: (input.requestedAngle || '').trim().toLowerCase(),
     contentType: (input.contentType || '').trim().toLowerCase(),
+    bannerTemplate: (input.bannerTemplate || 'editorial').trim().toLowerCase(),
   };
   return crypto.createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
 }

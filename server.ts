@@ -460,6 +460,7 @@ export async function createApp() {
         subject: input.subject ?? null,
         requested_angle: input.requestedAngle ?? null,
         content_type: input.contentType ?? null,
+        banner_template: input.bannerTemplate ?? 'editorial',
         sources_used: [],
         provider: 'tabitoken',
         requested_model: getConfiguredEditorialModel(),

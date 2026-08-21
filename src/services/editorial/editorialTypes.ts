@@ -10,6 +10,22 @@ export interface EditorialGenerationInput {
   subject?: string;
   requestedAngle?: string;
   contentType?: string;
+  /**
+   * Which Factory this generation came from and which banner template it
+   * defaults to -- 'editorial' or 'news'. Deliberately a SEPARATE field
+   * from `contentType` above, not a repurposing of it: `contentType` is
+   * an existing free-text hint (e.g. "profile", "interview") that already
+   * flows into the AI prompt (see editorialPromptBuilder.ts) and the
+   * duplicate-submission fingerprint; conflating the two would either
+   * leak "editorial"/"news" into the prompt as a fake content-type hint,
+   * or silently change what "same request" means for existing callers.
+   * `bannerTemplate` is intentionally NOT read by the prompt builder --
+   * News Factory generates the exact same way Editorial Factory does,
+   * only the banner rendered from the result looks different. Optional;
+   * missing/undefined defaults to 'editorial' downstream (server.ts,
+   * InstagramBannerPanel.tsx).
+   */
+  bannerTemplate?: 'editorial' | 'news';
 }
 
 export type EditorialStatus = 'READY' | 'NEEDS_REVIEW';

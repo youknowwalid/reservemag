@@ -4,7 +4,7 @@ import {
   LayoutDashboard, FileText, Settings, LogOut,
   ChevronRight, Shield, Layout as HomepageIcon,
   Circle, Mail, Briefcase, Video, Layers, Users, Database,
-  Newspaper
+  Newspaper, Rss
 } from 'lucide-react';
 import { useSupabase } from '../context/SupabaseContext';
 import { logout } from '../lib/supabase';
@@ -40,6 +40,7 @@ export default function AdminPanel() {
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'stories', label: 'Stories', icon: FileText },
     { id: 'editorial-factory', label: 'Editorial Factory', icon: Newspaper },
+    { id: 'news-factory', label: 'News Factory', icon: Rss },
     { id: 'bulk-import', label: 'Bulk Import', icon: Database },
     { id: 'categories', label: 'Categories', icon: Layers },
     { id: 'authors', label: 'Authors', icon: Users },
@@ -56,8 +57,18 @@ export default function AdminPanel() {
       case 'stories': return <StoriesSection />;
       case 'editorial-factory': return (
         <div className="space-y-12">
-          <EditorialGenerationPanel />
+          <EditorialGenerationPanel factoryKind="editorial" />
           <SourceRetrievalTestPanel />
+        </div>
+      );
+      // Same generation pipeline, publish flow, and component as Editorial
+      // Factory above -- only factoryKind differs, which selects the News
+      // banner template and passes bannerTemplate: 'news' with the
+      // generation request. See EditorialGenerationPanel.tsx's factoryKind
+      // doc comment.
+      case 'news-factory': return (
+        <div className="space-y-12">
+          <EditorialGenerationPanel factoryKind="news" />
         </div>
       );
       case 'bulk-import': return (
