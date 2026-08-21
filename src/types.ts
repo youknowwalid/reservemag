@@ -12,12 +12,22 @@ export interface ContentBlockStyle {
   alignment: ContentAlignment;
 }
 
-export interface ContentBlock {
-  id: string;
-  type: 'paragraph';
-  text: string;
-  style: ContentBlockStyle;
-}
+/**
+ * A discriminated union, per PROJECT_ARCHITECTURE.md's "No keyword-based
+ * UI logic. Rendering is driven by explicit properties in the
+ * ContentBlock schema" -- image/video were added in Stage 2 (contributor
+ * submissions) specifically so a photo_story/video submission publishes
+ * through the SAME `articles`/`content` pipeline as a text article,
+ * rather than a second parallel content system. RichTextRenderer.tsx
+ * branches on `type`; RichTextEditor.tsx (the admin manual editor) only
+ * ever constructs 'paragraph' blocks but must not crash when it
+ * encounters the other two (e.g. reopening a contributor-approved
+ * article) -- see its own handling.
+ */
+export type ContentBlock =
+  | { id: string; type: 'paragraph'; text: string; style: ContentBlockStyle }
+  | { id: string; type: 'image'; url: string; caption?: string }
+  | { id: string; type: 'video'; url: string; caption?: string };
 
 export interface Author {
   id?: string;
@@ -74,6 +84,57 @@ export interface Contributor {
   createdAt: string;
 }
 
+export type SubmissionContentType = 'article' | 'photo_story' | 'video';
+export type SubmissionStatus = 'draft' | 'submitted' | 'under_review' | 'approved_published' | 'rejected' | 'needs_revision';
+
+/** One piece of uploaded media within a submission -- a photo (photo_story, one or more) or a video file (video, exactly one). Uploaded via r2StorageService.ts (the same R2 integration the Instagram banner upload uses), never Supabase Storage. */
+export interface SubmissionMediaItem {
+  url: string;
+  caption?: string;
+}
+
+/**
+ * A contributor's content submission. Immutable once its status leaves
+ * 'draft' -- enforced by RLS (migration: add_submissions_and_notifications),
+ * not just hidden in the UI; see submissionService.ts's doc comments for
+ * the exact policy shape. A 'needs_revision' verdict is never edited in
+ * place -- the contributor creates a fresh submission with `revisionOf`
+ * pointing back at this one, so the original review history is never
+ * overwritten.
+ */
+export interface Submission {
+  id: string;
+  contributorId: string;
+  contentType: SubmissionContentType;
+  title: string;
+  /** Article body text -- only meaningful for contentType 'article'. */
+  body: string | null;
+  /** Caption -- only meaningful for 'photo_story'/'video' (an article's text lives in `body` instead). */
+  caption: string | null;
+  mediaUrls: SubmissionMediaItem[];
+  status: SubmissionStatus;
+  /** Required by the application layer (server.ts's review route) on reject/needs_revision -- never optional for those two verdicts. */
+  feedbackNote: string | null;
+  /** Set once approved -- the articles.id this became. */
+  publishedArticleId: string | null;
+  /** Points at the original submission this one revises, if any. */
+  revisionOf: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Simple in-app read/unread notification, created only by the admin review action (never self-insertable -- see the add_submissions_and_notifications migration's RLS). */
+export interface Notification {
+  id: string;
+  contributorId: string;
+  submissionId: string | null;
+  message: string;
+  read: boolean;
+  createdAt: string;
+}
+
 export interface Article {
   id?: string;
   slug: string;
@@ -86,6 +147,8 @@ export interface Article {
   featured: boolean;
   author: string;
   authorId?: string;
+  /** 'admin' (Editorial/News Factory, or the manual Stories editor) or 'contributor' (published via the Stage 2 submission review workflow -- see submissionService.ts). Not to be confused with `image.source` below (an unrelated field -- that one's the photo's own credit-link URL). */
+  source?: 'admin' | 'contributor';
   image: {
     url: string;
     credit: string;

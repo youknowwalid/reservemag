@@ -4,7 +4,7 @@ import {
   LayoutDashboard, FileText, Settings, LogOut,
   ChevronRight, Shield, Layout as HomepageIcon,
   Circle, Mail, Briefcase, Video, Layers, Database,
-  Newspaper, Rss, UserPlus
+  Newspaper, Rss, UserPlus, Inbox
 } from 'lucide-react';
 import { useSupabase } from '../context/SupabaseContext';
 import { logout } from '../lib/supabase';
@@ -31,6 +31,7 @@ import AIConnectionTestPanel from './admin/AIConnectionTestPanel';
 import SourceRetrievalTestPanel from './admin/SourceRetrievalTestPanel';
 import EditorialGenerationPanel from './admin/EditorialGenerationPanel';
 import ContributorsSection from './admin/ContributorsSection';
+import SubmissionsSection from './admin/SubmissionsSection';
 
 export default function AdminPanel() {
   const { user } = useSupabase();
@@ -56,6 +57,9 @@ export default function AdminPanel() {
     // a purely cosmetic change -- see migration:
     // merge_legacy_authors_into_contributors).
     { id: 'contributors', label: 'Authors', icon: UserPlus },
+    // A review queue (what's submitted), not a people directory (who the
+    // people are) -- deliberately separate from "Authors" above.
+    { id: 'submissions', label: 'Submissions', icon: Inbox },
     { id: 'videos', label: 'Video Interviews', icon: Video },
     { id: 'leads', label: 'Lead Requests', icon: Briefcase },
     { id: 'newsletter', label: 'Newsletter', icon: Mail },
@@ -92,6 +96,7 @@ export default function AdminPanel() {
       );
       case 'categories': return <CategorySection />;
       case 'contributors': return <ContributorsSection />;
+      case 'submissions': return <SubmissionsSection />;
       case 'videos': return <VideoSection />;
       case 'newsletter': return <NewsletterSection />;
       case 'leads': return <LeadSection />;

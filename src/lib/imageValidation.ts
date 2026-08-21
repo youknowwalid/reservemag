@@ -29,6 +29,14 @@ export function validateFileType(file: FileLike): ValidationResult {
   return { ok: true };
 }
 
+/** Rejects anything that isn't a video/* MIME type -- the Stage 2 submission upload's video counterpart to validateFileType above. */
+export function validateVideoFileType(file: FileLike): ValidationResult {
+  if (!file.type.startsWith('video/')) {
+    return { ok: false, reason: 'Invalid file type. Please upload a video.' };
+  }
+  return { ok: true };
+}
+
 /** Rejects a file over `maxBytes`. `maxBytes` is a required, explicit parameter (no hidden default) so callers with different limits -- e.g. a future Stage 2 content-photo cap -- can never silently share a value they didn't intend to. */
 export function validateFileSize(file: FileLike, maxBytes: number): ValidationResult {
   if (file.size > maxBytes) {
@@ -53,6 +61,10 @@ export function validateFileTypeAndSize(file: FileLike, maxBytes: number): Valid
  * article images, rather than inventing a third number.
  */
 export const CONTRIBUTOR_PROFILE_PHOTO_MAX_BYTES = 5 * 1024 * 1024;
+
+/** Stage 2 submission media caps, per the brief -- enforced client-side (this module) before an upload ever starts, AND server-side as a backstop (server.ts's /api/contributor/submission-upload route re-checks the same numbers against the actual bytes received, never trusting the client alone). */
+export const SUBMISSION_PHOTO_MAX_BYTES = 2 * 1024 * 1024;
+export const SUBMISSION_VIDEO_MAX_BYTES = 100 * 1024 * 1024;
 
 /**
  * Minimum acceptable profile-photo resolution -- "HD" is a loose term

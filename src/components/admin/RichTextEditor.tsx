@@ -13,12 +13,19 @@ import {
   GripVertical,
   Strikethrough
 } from 'lucide-react';
-import { ContentBlock, ContentFontSize, ContentAlignment } from '../../types';
+import { ContentBlock, ContentBlockStyle, ContentFontSize, ContentAlignment } from '../../types';
 
 interface RichTextEditorProps {
   blocks: ContentBlock[];
   onChange: (blocks: ContentBlock[]) => void;
 }
+
+// This editor only ever authors/edits 'paragraph' blocks (see the render
+// loop below for why 'image'/'video' get a read-only preview instead) --
+// narrowing update helpers to this variant specifically, rather than
+// `Partial<ContentBlock>` across the whole union, is what makes `.style`/
+// `.text` valid to merge here without a mismatched-variant escape hatch.
+type ParagraphBlock = Extract<ContentBlock, { type: 'paragraph' }>;
 
 export default function RichTextEditor({ blocks, onChange }: RichTextEditorProps) {
   const addBlock = () => {
@@ -42,13 +49,13 @@ export default function RichTextEditor({ blocks, onChange }: RichTextEditorProps
     onChange(blocks.filter(b => b.id !== id));
   };
 
-  const updateBlock = (id: string, updates: Partial<ContentBlock>) => {
-    onChange(blocks.map(b => b.id === id ? { ...b, ...updates } : b));
+  const updateBlock = (id: string, updates: Partial<ParagraphBlock>) => {
+    onChange(blocks.map(b => (b.id === id && b.type === 'paragraph') ? { ...b, ...updates } : b));
   };
 
-  const updateStyle = (id: string, styleUpdates: Partial<ContentBlock['style']>) => {
+  const updateStyle = (id: string, styleUpdates: Partial<ContentBlockStyle>) => {
     const block = blocks.find(b => b.id === id);
-    if (block) {
+    if (block && block.type === 'paragraph') {
       updateBlock(id, {
         style: { ...block.style, ...styleUpdates }
       });
@@ -68,7 +75,35 @@ export default function RichTextEditor({ blocks, onChange }: RichTextEditorProps
       </div>
 
       <div className="space-y-4">
-        {blocks.map((block, index) => (
+        {blocks.map((block, index) => {
+          // 'image'/'video' blocks -- added in Stage 2 for contributor
+          // photo_story/video submissions (see ContentBlock's doc
+          // comment in types.ts). This editor has no authoring UI for
+          // them (they're only ever produced by the submission-review
+          // publish path, server-side) -- but it must not crash when it
+          // encounters one while editing an otherwise-text article, so
+          // this renders a simple read-only preview + delete instead of
+          // the full text-formatting toolbar below.
+          if (block.type !== 'paragraph') {
+            return (
+              <div key={block.id} className="group relative bg-zinc-950/50 border border-white/5 hover:border-white/10 transition-all p-6 flex items-center gap-4">
+                {block.type === 'image' ? (
+                  <img src={block.url} alt="" className="w-20 h-20 object-cover bg-black shrink-0" />
+                ) : (
+                  <div className="w-20 h-20 bg-black flex items-center justify-center text-[9px] uppercase tracking-widest text-zinc-600 shrink-0">Video</div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-[9px] uppercase tracking-widest text-zinc-500">{block.type} block (not editable here)</div>
+                  {block.caption && <div className="text-xs text-zinc-400 truncate mt-1">{block.caption}</div>}
+                </div>
+                <button onClick={() => removeBlock(block.id)} className="p-2 text-zinc-700 hover:text-rose-500 transition-colors shrink-0">
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            );
+          }
+
+          return (
           <div key={block.id} className="group relative bg-zinc-950/50 border border-white/5 hover:border-white/10 transition-all p-6">
             <div className="absolute -left-10 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-2">
               <button disabled className="cursor-grab text-zinc-700 hover:text-zinc-500"><GripVertical size={16} /></button>
@@ -172,7 +207,8 @@ export default function RichTextEditor({ blocks, onChange }: RichTextEditorProps
               }}
             />
           </div>
-        ))}
+          );
+        })}
 
         {blocks.length === 0 && (
           <div className="py-20 border border-dashed border-white/5 flex flex-col items-center justify-center gap-4 text-zinc-600">

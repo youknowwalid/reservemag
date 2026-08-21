@@ -1,10 +1,16 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Instagram, Link as LinkIcon, Twitter, FileText, BarChart3 } from 'lucide-react';
+import { Instagram, Link as LinkIcon, Twitter, BarChart3, Plus } from 'lucide-react';
 import Navbar from '../../components/Navbar';
 import Footer from '../../components/Footer';
 import { useContributor } from '../../context/ContributorContext';
-import { logout } from '../../lib/supabase';
+import { logout, supabase } from '../../lib/supabase';
+import { submissionService } from '../../services/submissionService';
+import { notificationService } from '../../services/notificationService';
+import { Submission } from '../../types';
+import SubmissionForm from '../../components/contribute/SubmissionForm';
+import SubmissionsList from '../../components/contribute/SubmissionsList';
+import NotificationsList from '../../components/contribute/NotificationsList';
 
 const CATEGORY_LABELS: Record<string, string> = {
   journalist: 'Journalist',
@@ -13,19 +19,58 @@ const CATEGORY_LABELS: Record<string, string> = {
   other: 'Contributor',
 };
 
-// Stage 1's dashboard: just the contributor's own profile info + clearly
-// -marked empty-state placeholders for what Stage 2 (submissions) and
-// Stage 3 (analytics/public author card) will add here. No broken links,
-// no fake data -- these sections genuinely don't exist yet.
+// Stage 2: real submissions + notifications, replacing Stage 1's
+// placeholders. Analytics (reach/engagement stats) remains a genuine
+// Stage 3 hook-in point -- nothing here fakes that data.
 export default function ContributorDashboardPage() {
   const { contributor } = useContributor();
   const navigate = useNavigate();
+
+  const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [articleSlugsById, setArticleSlugsById] = useState<Record<string, string>>({});
+  const [notifications, setNotifications] = useState<Awaited<ReturnType<typeof notificationService.getOwnNotifications>>>([]);
+  const [showForm, setShowForm] = useState(false);
+  const [revisionOf, setRevisionOf] = useState<Submission | null>(null);
+
+  const load = async (contributorId: string) => {
+    const subs = await submissionService.getOwnSubmissions(contributorId);
+    setSubmissions(subs);
+
+    // Look up slugs for approved/published submissions -- submissions
+    // only stores the published article's id, not its slug (which could
+    // change later), so this is resolved separately, on read.
+    const publishedIds = subs.map((s) => s.publishedArticleId).filter((id): id is string => Boolean(id));
+    if (publishedIds.length > 0) {
+      const { data } = await supabase.from('articles').select('id, slug').in('id', publishedIds);
+      const map: Record<string, string> = {};
+      (data ?? []).forEach((row: any) => { map[row.id] = row.slug; });
+      setArticleSlugsById(map);
+    }
+
+    setNotifications(await notificationService.getOwnNotifications(contributorId));
+  };
+
+  useEffect(() => {
+    if (contributor) load(contributor.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when the contributor identity itself changes, not on every render
+  }, [contributor?.id]);
 
   if (!contributor) return null; // ContributorProtectedRoute already guards this; guards against a render before context settles.
 
   const handleLogout = async () => {
     await logout();
     navigate('/contribute');
+  };
+
+  const handleRevise = (submission: Submission) => {
+    setRevisionOf(submission);
+    setShowForm(true);
+  };
+
+  const handleFormDone = () => {
+    setShowForm(false);
+    setRevisionOf(null);
+    load(contributor.id);
   };
 
   return (
@@ -80,19 +125,43 @@ export default function ContributorDashboardPage() {
           </div>
         </div>
 
-        {/* Stage 2 hook-in point -- content submission list. Empty state
-            only; no submission flow exists yet. */}
-        <div className="bg-zinc-950/50 border border-white/5 border-dashed p-10 text-center space-y-2">
-          <FileText className="mx-auto text-zinc-700" size={24} />
-          <h3 className="text-sm uppercase tracking-widest text-zinc-500">Your Submissions</h3>
-          <p className="text-xs text-zinc-600">Content submission opens in a future update. You'll be able to submit and track pieces here.</p>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm uppercase tracking-widest text-zinc-500">Notifications</h3>
+          </div>
+          <NotificationsList notifications={notifications} onMarkedRead={() => load(contributor.id)} />
         </div>
 
-        {/* Stage 2/3 hook-in point -- performance analytics. */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm uppercase tracking-widest text-zinc-500">Your Submissions</h3>
+            {!showForm && (
+              <button
+                onClick={() => { setRevisionOf(null); setShowForm(true); }}
+                className="flex items-center gap-2 px-4 py-2 bg-white text-black text-[10px] font-bold uppercase tracking-widest hover:bg-reserve-accent transition-colors"
+              >
+                <Plus size={14} /> New Submission
+              </button>
+            )}
+          </div>
+
+          {showForm && (
+            <SubmissionForm
+              contributorId={contributor.id}
+              revisionOf={revisionOf?.id}
+              onDone={handleFormDone}
+              onCancel={() => { setShowForm(false); setRevisionOf(null); }}
+            />
+          )}
+
+          <SubmissionsList submissions={submissions} articleSlugsById={articleSlugsById} onRevise={handleRevise} />
+        </div>
+
+        {/* Stage 3 hook-in point -- performance analytics. Genuinely not built -- no fake numbers. */}
         <div className="bg-zinc-950/50 border border-white/5 border-dashed p-10 text-center space-y-2">
           <BarChart3 className="mx-auto text-zinc-700" size={24} />
           <h3 className="text-sm uppercase tracking-widest text-zinc-500">Analytics</h3>
-          <p className="text-xs text-zinc-600">Reach and engagement stats for your published work will appear here once submissions are live.</p>
+          <p className="text-xs text-zinc-600">Reach and engagement stats for your published work will appear here in a future update.</p>
         </div>
       </div>
       <Footer />
