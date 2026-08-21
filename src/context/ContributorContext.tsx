@@ -15,18 +15,24 @@ import { contributorService } from '../services/contributorService';
 
 interface ContributorContextType {
   user: User | null;
-  /** null until profile completion has happened -- see contributorService.completeProfile(). A non-null `user` with a null `contributor` means "signed up, profile not yet completed" (Step 2 gate). */
+  /** Derived from user.email_confirmed_at -- the real signal, not "a session exists" (a session can exist for an unconfirmed account depending on this Supabase project's email-confirmation setting, which is exactly what let the profile form leak through before this was added). Step 2's gate (ContributorVerifyEmailPage) and Step 3's guard (ContributorProfilePage) both check this, not just `user`. */
+  emailConfirmed: boolean;
+  /** null until profile completion has happened -- see contributorService.completeProfile(). A non-null `user` with a null `contributor` means "signed up, profile not yet completed" (Step 3 gate -- Step 2, email verification, comes first). */
   contributor: Contributor | null;
   loading: boolean;
   /** Re-fetches `contributor` for the current user -- call right after completeProfile() succeeds, since Supabase Auth's own auth state doesn't change on that write (only the contributors table row does). */
   refreshContributor: () => Promise<void>;
+  /** Re-reads the Supabase session from scratch -- used by ContributorVerifyEmailPage's "I've verified -- Continue" button, for when the automatic onAuthStateChange listener below doesn't fire on its own (e.g. the confirmation link was opened in a different browser/device than this tab). */
+  reloadSession: () => Promise<void>;
 }
 
 const ContributorContext = createContext<ContributorContextType>({
   user: null,
+  emailConfirmed: false,
   contributor: null,
   loading: true,
   refreshContributor: async () => {},
+  reloadSession: async () => {},
 });
 
 export const useContributor = () => useContext(ContributorContext);
@@ -66,8 +72,15 @@ export const ContributorProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setContributor(profile);
   }, [user]);
 
+  const reloadSession = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    await loadContributor(session?.user ?? null);
+  }, [loadContributor]);
+
+  const emailConfirmed = Boolean(user?.email_confirmed_at);
+
   return (
-    <ContributorContext.Provider value={{ user, contributor, loading, refreshContributor }}>
+    <ContributorContext.Provider value={{ user, emailConfirmed, contributor, loading, refreshContributor, reloadSession }}>
       {children}
     </ContributorContext.Provider>
   );

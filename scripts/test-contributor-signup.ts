@@ -1,6 +1,7 @@
 // Deterministic, network/DOM-free tests for the "Become a Contributor"
-// signup/profile-completion validation logic (src/lib/imageValidation.ts).
-// Run with `npm run test:contributor-signup`.
+// signup/profile-completion validation logic (src/lib/imageValidation.ts)
+// and route-guard logic (src/lib/contributorRouting.ts). Run with
+// `npm run test:contributor-signup`.
 //
 // Only the synchronous, DOM-free pieces are unit-tested here --
 // validateFileType/validateFileSize/validateFileTypeAndSize (take a
@@ -11,6 +12,17 @@
 // instagramBannerRenderer.ts's canvas drawing (documented there and in
 // scripts/test-news-banner-template.ts), exercised manually through the
 // actual profile-photo upload form instead.
+//
+// The four resolve*Redirect functions ARE the actual route guards --
+// ContributorSignupPage/ContributorVerifyEmailPage/ContributorProfilePage/
+// ContributorProtectedRoute all call these directly rather than
+// reimplementing the logic inline, so testing these functions IS testing
+// the real enforcement, not an approximation of it. resolveProfilePageRedirect
+// in particular is the fix for the bug this script was extended to cover:
+// the profile-completion form must be unreachable (never returns null) for
+// any state where emailConfirmed is false, regardless of how that state
+// was reached (redirected here, or a direct URL hit) -- see
+// testProfilePageBlocksUnverifiedAccount below.
 //
 // Never touches Supabase, auth, or the network -- contributorService.ts
 // and ContributorContext.tsx are thin wrappers around supabase-js calls
@@ -28,6 +40,13 @@ import {
   CONTRIBUTOR_PROFILE_PHOTO_MIN_HEIGHT,
   type FileLike,
 } from '../src/lib/imageValidation';
+import {
+  resolveSignupPageRedirect,
+  resolveVerifyEmailPageRedirect,
+  resolveProfilePageRedirect,
+  resolveDashboardGuardRedirect,
+  type ContributorAuthState,
+} from '../src/lib/contributorRouting';
 
 let passed = 0;
 let failed = 0;
@@ -146,6 +165,64 @@ function testConstantsAreSane() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Route guards -- resolveProfilePageRedirect is the fix's core assertion
+// ---------------------------------------------------------------------------
+
+function state(overrides: Partial<ContributorAuthState>): ContributorAuthState {
+  return { hasUser: false, emailConfirmed: false, hasContributor: false, ...overrides };
+}
+
+function testProfilePageBlocksUnverifiedAccount() {
+  console.log('\n=== resolveProfilePageRedirect: an unconfirmed account can NEVER reach the profile form ===');
+  // The exact bug: a session existing was previously enough. Assert it
+  // is not, for every combination where emailConfirmed is false.
+  const unverifiedNoContributor = resolveProfilePageRedirect(state({ hasUser: true, emailConfirmed: false, hasContributor: false }));
+  assert(unverifiedNoContributor === '/contribute/verify-email', 'signed in, unverified, no profile yet -> sent to the verification gate, NOT the form', unverifiedNoContributor);
+
+  const unverifiedSomehowHasContributor = resolveProfilePageRedirect(state({ hasUser: true, emailConfirmed: false, hasContributor: true }));
+  assert(unverifiedSomehowHasContributor === '/contribute/verify-email', 'even if a contributor row somehow exists, an unconfirmed session is still sent to verification first, never the form', unverifiedSomehowHasContributor);
+
+  const noSession = resolveProfilePageRedirect(state({ hasUser: false, emailConfirmed: false, hasContributor: false }));
+  assert(noSession === '/contribute', 'no session at all -> sent to signup, not the form');
+}
+
+function testProfilePageAllowsVerifiedAccount() {
+  console.log('\n=== resolveProfilePageRedirect: a verified account WITH no profile yet reaches the form ===');
+  const verifiedNoContributor = resolveProfilePageRedirect(state({ hasUser: true, emailConfirmed: true, hasContributor: false }));
+  assert(verifiedNoContributor === null, 'verified + no contributor row -> null (render the form) -- this is the only state that does', verifiedNoContributor);
+}
+
+function testProfilePageRedirectsCompletedProfile() {
+  console.log('\n=== resolveProfilePageRedirect: a verified account that already completed their profile skips the form ===');
+  const alreadyDone = resolveProfilePageRedirect(state({ hasUser: true, emailConfirmed: true, hasContributor: true }));
+  assert(alreadyDone === '/contribute/dashboard', 'verified + contributor row already exists -> straight to the dashboard, not back through the form', alreadyDone);
+}
+
+function testSignupPageRedirect() {
+  console.log('\n=== resolveSignupPageRedirect: routes a signed-in visitor to wherever they actually belong ===');
+  assert(resolveSignupPageRedirect(state({ hasUser: false })) === null, 'no session -> null (show the signup form)');
+  assert(resolveSignupPageRedirect(state({ hasUser: true, emailConfirmed: false })) === '/contribute/verify-email', 'signed in but unverified -> verification gate, not the profile form', resolveSignupPageRedirect(state({ hasUser: true, emailConfirmed: false })));
+  assert(resolveSignupPageRedirect(state({ hasUser: true, emailConfirmed: true, hasContributor: false })) === '/contribute/profile', 'verified, no profile yet -> profile form');
+  assert(resolveSignupPageRedirect(state({ hasUser: true, emailConfirmed: true, hasContributor: true })) === '/contribute/dashboard', 'fully set up -> dashboard');
+}
+
+function testVerifyEmailPageRedirect() {
+  console.log('\n=== resolveVerifyEmailPageRedirect: shows the gate exactly while unverified, handles the no-session-yet case ===');
+  assert(resolveVerifyEmailPageRedirect(state({ hasUser: false }), false) === '/contribute', 'no session AND no pending email passed in -> back to signup (nothing to verify)');
+  assert(resolveVerifyEmailPageRedirect(state({ hasUser: false }), true) === null, 'no session yet, but a pending email was passed from signup -> show the gate (this Supabase project may not issue a session before the link is clicked)');
+  assert(resolveVerifyEmailPageRedirect(state({ hasUser: true, emailConfirmed: false }), false) === null, 'session exists but unconfirmed -> show the gate');
+  assert(resolveVerifyEmailPageRedirect(state({ hasUser: true, emailConfirmed: true, hasContributor: false }), false) === '/contribute/profile', 'just confirmed, no profile yet -> straight on to the profile form');
+  assert(resolveVerifyEmailPageRedirect(state({ hasUser: true, hasContributor: true }), false) === '/contribute/dashboard', 'already fully set up -> dashboard');
+}
+
+function testDashboardGuardRedirect() {
+  console.log('\n=== resolveDashboardGuardRedirect: dashboard requires both a session and a completed profile ===');
+  assert(resolveDashboardGuardRedirect(state({ hasUser: false })) === '/contribute', 'no session -> signup');
+  assert(resolveDashboardGuardRedirect(state({ hasUser: true, hasContributor: false })) === '/contribute/profile', 'session but no profile -> profile form (note: reaching the form from here still passes through resolveProfilePageRedirect\'s own emailConfirmed check)');
+  assert(resolveDashboardGuardRedirect(state({ hasUser: true, hasContributor: true })) === null, 'session + completed profile -> null (render the dashboard)');
+}
+
 async function main() {
   testFileTypeAccepted();
   testFileTypeRejected();
@@ -158,6 +235,12 @@ async function main() {
   testValidUrls();
   testInvalidUrls();
   testConstantsAreSane();
+  testProfilePageBlocksUnverifiedAccount();
+  testProfilePageAllowsVerifiedAccount();
+  testProfilePageRedirectsCompletedProfile();
+  testSignupPageRedirect();
+  testVerifyEmailPageRedirect();
+  testDashboardGuardRedirect();
 
   console.log(`\n=== SUMMARY === ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

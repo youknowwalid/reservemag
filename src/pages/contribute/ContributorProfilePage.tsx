@@ -7,6 +7,7 @@ import { useContributor } from '../../context/ContributorContext';
 import { contributorService } from '../../services/contributorService';
 import { ContributorCategory } from '../../types';
 import ContributorWelcomeModal from '../../components/contribute/ContributorWelcomeModal';
+import { resolveProfilePageRedirect } from '../../lib/contributorRouting';
 import {
   validateFileTypeAndSize,
   validateImageResolution,
@@ -23,12 +24,12 @@ const CATEGORIES: { value: ContributorCategory; label: string }[] = [
   { value: 'other', label: 'Other' },
 ];
 
-// Step 2 -- required profile completion. Every field here is required
+// Step 3 -- required profile completion. Every field here is required
 // together (no partial save); the dashboard is unreachable until this
 // submits successfully (see ContributorProtectedRoute). On success, shows
-// the Step 3 "Congratulations" modal before handing off to the dashboard.
+// the Step 4 "Congratulations" modal before handing off to the dashboard.
 export default function ContributorProfilePage() {
-  const { user, contributor, loading, refreshContributor } = useContributor();
+  const { user, contributor, emailConfirmed, loading, refreshContributor } = useContributor();
   const navigate = useNavigate();
 
   const [fullName, setFullName] = useState('');
@@ -48,8 +49,15 @@ export default function ContributorProfilePage() {
   const [error, setError] = useState<string | null>(null);
   const [showWelcome, setShowWelcome] = useState(false);
 
-  if (!loading && !user) return <Navigate to="/contribute" replace />;
-  if (!loading && contributor) return <Navigate to="/contribute/dashboard" replace />;
+  // resolveProfilePageRedirect is THE fix's core assertion, directly
+  // unit-tested (scripts/test-contributor-signup.ts): an unconfirmed
+  // contributor (real state -- user.email_confirmed_at, not just "did
+  // they land here from the right screen") is bounced to the
+  // verification step even if they navigate straight to this URL.
+  if (!loading) {
+    const redirect = resolveProfilePageRedirect({ hasUser: Boolean(user), emailConfirmed, hasContributor: Boolean(contributor) });
+    if (redirect) return <Navigate to={redirect} replace />;
+  }
 
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -158,7 +166,7 @@ export default function ContributorProfilePage() {
                 value={phoneNumber}
                 onChange={(e) => setPhoneNumber(e.target.value)}
                 className="w-full bg-black border border-white/10 p-4 text-sm outline-none focus:border-reserve-accent"
-                placeholder="Not OTP-verified -- entered as-is"
+                placeholder="+1 555 123 4567"
                 required
               />
             </div>

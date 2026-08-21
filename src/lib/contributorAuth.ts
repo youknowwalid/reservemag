@@ -17,18 +17,37 @@ import { supabase } from './supabase';
 
 /**
  * Email + password signup. Supabase's default project settings send a
- * confirmation link (not an OTP code) to `email` -- this is "Supabase's
+ * confirmation LINK (not an OTP code) to `email` -- this is "Supabase's
  * built-in email confirmation" as-is, with no dashboard changes needed.
- * A session is typically issued immediately (even before the link is
- * clicked, depending on the project's "Confirm email" setting), which is
- * why the profile-completion step doesn't gate on email_confirmed_at --
- * see ContributorContext.tsx.
+ * `emailRedirectTo` points at the verify-email gate (Step 2), not
+ * straight at profile completion (Step 3) -- clicking the link lands the
+ * browser there with a freshly-confirmed session, and
+ * ContributorVerifyEmailPage is what actually moves the contributor
+ * forward once `user.email_confirmed_at` is set.
+ *
+ * Whether an active (but unconfirmed) session is issued immediately
+ * after this call, before the link is even clicked, depends on this
+ * Supabase project's "Confirm email" setting -- either way, forward
+ * progress is gated on `emailConfirmed` (ContributorContext.tsx, derived
+ * from `email_confirmed_at`), never on "a session merely exists". That
+ * distinction was the actual bug this fixed: a session existing was
+ * previously enough to reach the profile form, confirmed or not.
  */
 export async function signUpContributor(email: string, password: string): Promise<void> {
   const { error } = await supabase.auth.signUp({
     email,
     password,
-    options: { emailRedirectTo: `${window.location.origin}/contribute/profile` },
+    options: { emailRedirectTo: `${window.location.origin}/contribute/verify-email` },
+  });
+  if (error) throw error;
+}
+
+/** Re-sends the signup confirmation link -- for ContributorVerifyEmailPage's "Resend" action, when the first email didn't arrive or expired. Works off the plain email string, no active session required (matters for the case where signUp() didn't issue one). */
+export async function resendConfirmationEmail(email: string): Promise<void> {
+  const { error } = await supabase.auth.resend({
+    type: 'signup',
+    email,
+    options: { emailRedirectTo: `${window.location.origin}/contribute/verify-email` },
   });
   if (error) throw error;
 }
