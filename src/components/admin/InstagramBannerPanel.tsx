@@ -9,7 +9,10 @@ import {
   loadImage,
   BANNER_WIDTH,
   BANNER_HEIGHT,
-  DEFAULT_ELEMENT_COLORS,
+  EDITORIAL_DEFAULT_COLORS,
+  NEWS_DEFAULT_COLORS,
+  NEWS_PHOTO_BOX,
+  type BannerTemplate,
   type InstagramBannerOverrides,
   type ElementOverride,
 } from '../../lib/instagramBannerRenderer';
@@ -57,6 +60,8 @@ interface InstagramBannerPanelProps {
   recordId: string | null;
   /** Which table `recordId` refers to. Defaults to 'editorial_generations' (the Editorial Factory entry point); pass 'articles' when mounting from the Stories Archive. */
   recordTable?: 'editorial_generations' | 'articles';
+  /** Which banner layout this panel starts on -- 'editorial' (Editorial Factory) or 'news' (News Factory). The admin can still switch templates via the toggle below; this only sets the initial state, and is overridden by a saved config's own recorded template on reopen (see the restore effect). Defaults to 'editorial'. */
+  defaultTemplate?: BannerTemplate;
   editorialPackage: {
     coverKicker: string;
     coverSecondaryLine: string;
@@ -72,14 +77,17 @@ const DEFAULT_OVERRIDES: Required<InstagramBannerOverrides> = {
   subtitle: EMPTY_OVERRIDE,
   headline: EMPTY_OVERRIDE,
   logo: EMPTY_OVERRIDE,
+  emphasis: EMPTY_OVERRIDE,
 };
 
-/** What gets saved to recordTable.instagram_banner_config -- everything needed to reproduce this exact banner on reopen, not just the resulting image. `overrides` already carries each element's `color` (see ElementOverride), so no separate color field is needed here. */
+/** What gets saved to recordTable.instagram_banner_config -- everything needed to reproduce this exact banner on reopen, not just the resulting image. `overrides` already carries each element's `color` (see ElementOverride), so no separate color field is needed here. `template`/`emphasisPhrase` are optional so a banner saved before the News template existed still loads fine (falls back to 'editorial'/'' -- see the restore effect). */
 interface SavedBannerConfig {
+  template?: BannerTemplate;
   kicker: string;
   subtitle: string;
   headline: string;
   creditLine: string;
+  emphasisPhrase?: string;
   imageUrl: string;
   focalX: number;
   focalY: number;
@@ -95,63 +103,71 @@ function ElementAdjustRow({
   minFontSize,
   maxFontSize,
   defaultColor,
+  hideSizePosition,
 }: {
   label: string;
   value: ElementOverride;
   onChange: (next: ElementOverride) => void;
-  autoFontSizeLabel: string;
-  minFontSize: number;
-  maxFontSize: number;
+  autoFontSizeLabel?: string;
+  minFontSize?: number;
+  maxFontSize?: number;
   /** Sampled brand default this element's color picker starts at (and "Reset to Auto" restores). Omit for elements with no drawable color (the Logo row) -- the color picker itself is hidden in that case. */
   defaultColor?: string;
+  /** True for elements with no independent size/position of their own -- e.g. the news template's emphasis phrase, which is inline text riding on the headline's own layout. Only the color control + reset button render; `autoFontSizeLabel`/`minFontSize`/`maxFontSize` are unused in that case. */
+  hideSizePosition?: boolean;
 }) {
   const isAuto = value.fontSize === undefined;
   const isAutoColor = value.color === undefined;
+  const isAutoOverall = hideSizePosition ? isAutoColor : isAuto && isAutoColor && value.offsetX === 0 && value.offsetY === 0;
   return (
     <div className="space-y-2 bg-black/30 border border-white/5 p-3">
       <div className="flex items-center justify-between">
         <span className="text-[9px] uppercase tracking-widest text-zinc-400 font-bold">{label}</span>
         <button
           onClick={() => onChange(EMPTY_OVERRIDE)}
-          disabled={isAuto && isAutoColor && value.offsetX === 0 && value.offsetY === 0}
+          disabled={isAutoOverall}
           className="flex items-center gap-1 text-[9px] uppercase tracking-widest text-reserve-accent hover:text-white disabled:opacity-30 disabled:cursor-default"
         >
           <RotateCcw size={10} /> Reset to Auto
         </button>
       </div>
       <div className="grid grid-cols-3 gap-2 items-center">
-        <div className="col-span-3 flex items-center gap-2">
-          <span className="text-[9px] text-zinc-600 w-16 shrink-0">Font size</span>
-          <input
-            type="range"
-            min={minFontSize}
-            max={maxFontSize}
-            step={1}
-            value={value.fontSize ?? (minFontSize + maxFontSize) / 2}
-            onChange={(e) => onChange({ ...value, fontSize: parseInt(e.target.value, 10) })}
-            className="flex-1 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-reserve-accent"
-          />
-          <span className="text-[9px] text-zinc-500 font-mono w-16 text-right">{isAuto ? autoFontSizeLabel : `${value.fontSize}px`}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <span className="text-[9px] text-zinc-600">X</span>
-          <input
-            type="number"
-            value={value.offsetX}
-            onChange={(e) => onChange({ ...value, offsetX: parseInt(e.target.value, 10) || 0 })}
-            className="w-full bg-black border border-white/10 p-1.5 text-[10px] font-mono"
-          />
-        </div>
-        <div className="flex items-center gap-1">
-          <span className="text-[9px] text-zinc-600">Y</span>
-          <input
-            type="number"
-            value={value.offsetY}
-            onChange={(e) => onChange({ ...value, offsetY: parseInt(e.target.value, 10) || 0 })}
-            className="w-full bg-black border border-white/10 p-1.5 text-[10px] font-mono"
-          />
-        </div>
-        <div className="text-[9px] text-zinc-600">px nudge</div>
+        {!hideSizePosition && (
+          <>
+            <div className="col-span-3 flex items-center gap-2">
+              <span className="text-[9px] text-zinc-600 w-16 shrink-0">Font size</span>
+              <input
+                type="range"
+                min={minFontSize}
+                max={maxFontSize}
+                step={1}
+                value={value.fontSize ?? ((minFontSize ?? 0) + (maxFontSize ?? 0)) / 2}
+                onChange={(e) => onChange({ ...value, fontSize: parseInt(e.target.value, 10) })}
+                className="flex-1 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-reserve-accent"
+              />
+              <span className="text-[9px] text-zinc-500 font-mono w-16 text-right">{isAuto ? autoFontSizeLabel : `${value.fontSize}px`}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-[9px] text-zinc-600">X</span>
+              <input
+                type="number"
+                value={value.offsetX}
+                onChange={(e) => onChange({ ...value, offsetX: parseInt(e.target.value, 10) || 0 })}
+                className="w-full bg-black border border-white/10 p-1.5 text-[10px] font-mono"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-[9px] text-zinc-600">Y</span>
+              <input
+                type="number"
+                value={value.offsetY}
+                onChange={(e) => onChange({ ...value, offsetY: parseInt(e.target.value, 10) || 0 })}
+                className="w-full bg-black border border-white/10 p-1.5 text-[10px] font-mono"
+              />
+            </div>
+            <div className="text-[9px] text-zinc-600">px nudge</div>
+          </>
+        )}
         {defaultColor && (
           <div className="col-span-3 flex items-center gap-2 pt-1">
             <span className="text-[9px] text-zinc-600 w-16 shrink-0">Color</span>
@@ -176,11 +192,26 @@ function ElementAdjustRow({
   );
 }
 
-export default function InstagramBannerPanel({ recordId, recordTable = 'editorial_generations', editorialPackage, sources }: InstagramBannerPanelProps) {
+export default function InstagramBannerPanel({
+  recordId,
+  recordTable = 'editorial_generations',
+  defaultTemplate = 'editorial',
+  editorialPackage,
+  sources,
+}: InstagramBannerPanelProps) {
   const [expanded, setExpanded] = useState(false);
+  // Which layout to draw -- admin-switchable (see the toggle below), not
+  // just a fixed prop, so reopening an archived article can freely try
+  // either look regardless of which Factory it originated from.
+  const [template, setTemplate] = useState<BannerTemplate>(defaultTemplate);
   const [kicker, setKicker] = useState(editorialPackage.coverKicker);
   const [subtitle, setSubtitle] = useState(editorialPackage.coverSecondaryLine);
   const [headline, setHeadline] = useState(editorialPackage.instagramHeadline);
+  // News template only -- the exact substring of `headline` to render in
+  // red. Deliberately empty by default rather than pre-filled from any
+  // "last N words" guess: the spec is explicit that this must be fully
+  // admin-controlled, not a heuristic that might grab the wrong phrase.
+  const [emphasisPhrase, setEmphasisPhrase] = useState('');
   const [imageUrl, setImageUrl] = useState(editorialPackage.imageUrl);
   // Cover-fit focal point (0-100 per axis, same semantics as CSS
   // object-position -- see FocalPointEditor and
@@ -191,6 +222,7 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
   const [focalY, setFocalY] = useState(50);
   const [creditLine, setCreditLine] = useState(() => {
     const publisher = sources.find((s) => s.status === 'SUCCESS')?.publisher;
+    if (defaultTemplate === 'news') return publisher ? `Source: ${publisher}` : 'Source: THE RESERVE';
     return publisher ? `COURTESY: ${publisher.toUpperCase()}` : 'COURTESY: THE RESERVE';
   });
   // Manual per-element adjustments (kicker/subtitle/headline/logo -- never
@@ -263,9 +295,11 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
       if (cancelled || fetchError || !data) return;
       if (data.instagram_banner_config) {
         const saved = data.instagram_banner_config as SavedBannerConfig;
+        setTemplate(saved.template ?? defaultTemplate);
         setKicker(saved.kicker ?? kicker);
         setSubtitle(saved.subtitle ?? subtitle);
         setHeadline(saved.headline ?? headline);
+        setEmphasisPhrase(saved.emphasisPhrase ?? '');
         setCreditLine(saved.creditLine ?? creditLine);
         setImageUrl(saved.imageUrl ?? imageUrl);
         setFocalX(saved.focalX ?? 50);
@@ -287,10 +321,12 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
     const canvas = canvasRef.current;
     if (!canvas) throw new Error('Canvas is not ready.');
     await renderInstagramBanner(canvas, {
+      template,
       imageSrc,
       kicker,
       subtitle,
       headline,
+      emphasisPhrase,
       creditLine,
       focalX,
       focalY,
@@ -361,7 +397,7 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
     if (!hasPreview || !objectUrlRef.current) return;
     renderFromSrc(objectUrlRef.current).catch((err) => setError(err?.message || 'Failed to update the preview.'));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- renderFromSrc closes over the latest state already; re-running on those same state changes is the point
-  }, [kicker, subtitle, headline, creditLine, focalX, focalY, overrides, hasPreview]);
+  }, [template, kicker, subtitle, headline, emphasisPhrase, creditLine, focalX, focalY, overrides, hasPreview]);
 
   const downloadPng = async () => {
     const canvas = canvasRef.current;
@@ -397,7 +433,7 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
       const publicUrl = await bannerUploadService.uploadRenderedBanner(blob, recordId);
 
       if (recordId) {
-        const config: SavedBannerConfig = { kicker, subtitle, headline, creditLine, imageUrl, focalX, focalY, overrides };
+        const config: SavedBannerConfig = { template, kicker, subtitle, headline, emphasisPhrase, creditLine, imageUrl, focalX, focalY, overrides };
         const { error: dbError } = await supabase
           .from(recordTable)
           .update({ instagram_banner_url: publicUrl, instagram_banner_config: config })
@@ -465,29 +501,64 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
     <div className="space-y-4 bg-black/40 border border-white/5 p-6">
       <div className="flex items-center justify-between">
         <span className="text-[10px] uppercase tracking-widest text-zinc-500">
-          Instagram Banner -- THE RESERVE template{loadedSavedConfig ? ' (restored saved layout)' : ''}
+          Instagram Banner -- {template === 'news' ? 'News' : 'Editorial'} template{loadedSavedConfig ? ' (restored saved layout)' : ''}
         </span>
         <button onClick={() => setExpanded(false)} className="text-zinc-500 hover:text-white text-[10px] uppercase tracking-widest">
           Collapse
         </button>
       </div>
 
+      {/* Template toggle -- which Factory a banner originated from only
+          sets the INITIAL template (defaultTemplate); it stays freely
+          switchable here so a reopened article can try either look. */}
+      <div className="flex gap-2">
+        {(['editorial', 'news'] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTemplate(t)}
+            className={`px-4 py-2 text-[9px] uppercase tracking-widest border transition-all ${
+              template === t ? 'bg-white text-black border-white' : 'border-white/10 text-zinc-500 hover:text-white'
+            }`}
+          >
+            {t === 'news' ? 'News' : 'Editorial'}
+          </button>
+        ))}
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="space-y-4">
-          <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-600 block">Kicker</label>
-            <input className="w-full bg-black border border-white/10 p-3 text-xs" value={kicker} onChange={(e) => setKicker(e.target.value)} maxLength={40} />
-          </div>
-          <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-600 block">Subtitle (up to 2 lines -- use a line break to force a split)</label>
-            <textarea className="w-full bg-black border border-white/10 p-3 text-xs" rows={2} value={subtitle} onChange={(e) => setSubtitle(e.target.value)} />
-          </div>
+          {template === 'editorial' && (
+            <>
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase tracking-widest text-zinc-600 block">Kicker</label>
+                <input className="w-full bg-black border border-white/10 p-3 text-xs" value={kicker} onChange={(e) => setKicker(e.target.value)} maxLength={40} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase tracking-widest text-zinc-600 block">Subtitle (up to 2 lines -- use a line break to force a split)</label>
+                <textarea className="w-full bg-black border border-white/10 p-3 text-xs" rows={2} value={subtitle} onChange={(e) => setSubtitle(e.target.value)} />
+              </div>
+            </>
+          )}
           <div className="space-y-1">
             <label className="text-[9px] uppercase tracking-widest text-zinc-600 block">Headline</label>
             <input className="w-full bg-black border border-white/10 p-3 text-xs" value={headline} onChange={(e) => setHeadline(e.target.value)} maxLength={80} />
           </div>
+          {template === 'news' && (
+            <div className="space-y-1">
+              <label className="text-[9px] uppercase tracking-widest text-zinc-600 block">
+                Emphasis phrase -- the exact words from the headline above to render in red
+              </label>
+              <input
+                className="w-full bg-black border border-white/10 p-3 text-xs"
+                value={emphasisPhrase}
+                onChange={(e) => setEmphasisPhrase(e.target.value)}
+                maxLength={80}
+                placeholder="e.g. the final clause of the headline"
+              />
+            </div>
+          )}
           <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-600 block">Credit line</label>
+            <label className="text-[9px] uppercase tracking-widest text-zinc-600 block">{template === 'news' ? 'Source line' : 'Credit line'}</label>
             <input className="w-full bg-black border border-white/10 p-3 text-xs" value={creditLine} onChange={(e) => setCreditLine(e.target.value)} />
           </div>
           <div className="space-y-1">
@@ -632,38 +703,51 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
         <div className="pt-6 border-t border-white/5 space-y-3">
           <span className="text-[10px] uppercase tracking-widest text-zinc-500 block">Manual Adjustments</span>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <ElementAdjustRow
-              label="Kicker"
-              value={overrides.kicker}
-              onChange={(next) => setOverrides((prev) => ({ ...prev, kicker: next }))}
-              autoFontSizeLabel="Auto (28px)"
-              minFontSize={16}
-              maxFontSize={48}
-              defaultColor={DEFAULT_ELEMENT_COLORS.kicker}
-            />
-            <ElementAdjustRow
-              label="Subtitle"
-              value={overrides.subtitle}
-              onChange={(next) => setOverrides((prev) => ({ ...prev, subtitle: next }))}
-              autoFontSizeLabel="Auto (32px)"
-              minFontSize={18}
-              maxFontSize={52}
-              defaultColor={DEFAULT_ELEMENT_COLORS.subtitle}
-            />
+            {template === 'editorial' && (
+              <>
+                <ElementAdjustRow
+                  label="Kicker"
+                  value={overrides.kicker}
+                  onChange={(next) => setOverrides((prev) => ({ ...prev, kicker: next }))}
+                  autoFontSizeLabel="Auto (28px)"
+                  minFontSize={16}
+                  maxFontSize={48}
+                  defaultColor={EDITORIAL_DEFAULT_COLORS.kicker}
+                />
+                <ElementAdjustRow
+                  label="Subtitle"
+                  value={overrides.subtitle}
+                  onChange={(next) => setOverrides((prev) => ({ ...prev, subtitle: next }))}
+                  autoFontSizeLabel="Auto (32px)"
+                  minFontSize={18}
+                  maxFontSize={52}
+                  defaultColor={EDITORIAL_DEFAULT_COLORS.subtitle}
+                />
+              </>
+            )}
             <ElementAdjustRow
               label="Headline"
               value={overrides.headline}
               onChange={(next) => setOverrides((prev) => ({ ...prev, headline: next }))}
               autoFontSizeLabel="Auto (fit)"
               minFontSize={36}
-              maxFontSize={120}
-              defaultColor={DEFAULT_ELEMENT_COLORS.headline}
+              maxFontSize={template === 'news' ? 72 : 120}
+              defaultColor={template === 'news' ? NEWS_DEFAULT_COLORS.headline : EDITORIAL_DEFAULT_COLORS.headline}
             />
+            {template === 'news' && (
+              <ElementAdjustRow
+                label="Emphasis Phrase"
+                value={overrides.emphasis}
+                onChange={(next) => setOverrides((prev) => ({ ...prev, emphasis: next }))}
+                defaultColor={NEWS_DEFAULT_COLORS.emphasis}
+                hideSizePosition
+              />
+            )}
             <ElementAdjustRow
               label="Logo"
               value={overrides.logo}
               onChange={(next) => setOverrides((prev) => ({ ...prev, logo: next }))}
-              autoFontSizeLabel="Auto (84px)"
+              autoFontSizeLabel={template === 'news' ? 'Auto (64px)' : 'Auto (84px)'}
               minFontSize={40}
               maxFontSize={160}
             />
@@ -673,11 +757,14 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
 
       {/* Crop/focal-point editor -- the shared component also used by the
           article editor's mobile hero crop tool (StoriesSection.tsx),
-          here in full 2D mode since the banner's fixed 1080x1350 frame
-          crops arbitrary source photos on both axes. Its own preview
-          uses the image URL directly (a plain <img> can display a
-          cross-origin image fine -- only canvas export needs the
-          proxy), so it gives instant feedback without waiting on a
+          here in full 2D mode since both templates' photo regions crop
+          arbitrary source photos on both axes. Editorial's photo fills
+          the whole 1080x1350 frame; news's is confined to the fixed
+          NEWS_PHOTO_BOX on the right -- aspectRatio matches whichever is
+          active so the crop preview reflects what actually renders. Its
+          own preview uses the image URL directly (a plain <img> can
+          display a cross-origin image fine -- only canvas export needs
+          the proxy), so it gives instant feedback without waiting on a
           fetch. Once a preview has been rendered, focal-point changes
           also live-update the actual canvas above (see the effect
           above). */}
@@ -685,7 +772,7 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
         <div className="pt-6 border-t border-white/5">
           <FocalPointEditor
             axis="both"
-            aspectRatio={`${BANNER_WIDTH}/${BANNER_HEIGHT}`}
+            aspectRatio={template === 'news' ? `${NEWS_PHOTO_BOX.width}/${NEWS_PHOTO_BOX.height}` : `${BANNER_WIDTH}/${BANNER_HEIGHT}`}
             imageUrl={imageUrl.trim()}
             x={focalX}
             y={focalY}
@@ -694,7 +781,7 @@ export default function InstagramBannerPanel({ recordId, recordTable = 'editoria
               setFocalY(y);
             }}
             title="Banner Focal Point"
-            helpText="Define the focal point for the banner's fixed frame."
+            helpText={template === 'news' ? 'Define the focal point for the photo box.' : "Define the focal point for the banner's fixed frame."}
           />
         </div>
       )}

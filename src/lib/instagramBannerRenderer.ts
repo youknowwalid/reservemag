@@ -1,27 +1,33 @@
 // Instagram Banner Automation -- client-side (browser Canvas) renderer for
-// THE RESERVE's approved editorial banner template. Runs entirely in the
-// admin's browser: no new server dependency, no Vercel serverless-runtime
-// risk (directly avoiding a repeat of the jsdom/ESM incident two prior
-// passes had to fix). Fonts: Inter (kicker/subtitle/credit line) is the
-// one already loaded site-wide (src/index.css); Bodoni Moda (masthead +
-// headline) is loaded specifically by this module -- see
-// ensureBodoniModaStylesheetInjected() below -- because the reference
-// masthead is a genuine high-contrast Didone/Bodoni-style face, which
-// Playfair Display (the site's own display serif) does not reproduce
-// closely enough. Scoped to this module rather than added to the global
-// stylesheet so it doesn't add a font request to every page on the site,
-// only when the banner tool is actually used.
+// THE RESERVE's banner templates. Runs entirely in the admin's browser: no
+// new server dependency, no Vercel serverless-runtime risk (directly
+// avoiding a repeat of the jsdom/ESM incident two prior passes had to
+// fix). Fonts: Inter (already loaded site-wide, src/index.css) is used at
+// its normal weights for the editorial template's kicker/subtitle/credit
+// line, AND at a heavier 800 weight for the news template's headline;
+// Bodoni Moda is loaded specifically here for the editorial masthead +
+// headline -- see ensureBannerFontsStylesheetInjected() below. Both extra
+// weights/families are loaded via one scoped Google Fonts request (not
+// added to the global stylesheet) so they don't cost every page on the
+// site a font request, only when the banner tool is actually used.
 //
-// FIXED TEMPLATE, NOT A REDESIGN: every proportion, weight, and color
-// below was measured directly off the approved reference banner files
-// (colors via programmatic pixel sampling -- see the CREAM/GOLD doc
+// TWO TEMPLATES, ONE RENDERER: `renderInstagramBanner()` dispatches on
+// `params.template` ('editorial' | 'news', defaults to 'editorial') to
+// renderEditorialTemplate() or renderNewsTemplate() below. They share the
+// canvas setup, image/font loading, and the cover-fit crop math
+// (computeCoverFit) -- only the actual layout/drawing differs per
+// template. InstagramBannerPanel.tsx is still the only caller, and owns
+// turning a generation's fields into these parameters for whichever
+// template is active.
+//
+// EDITORIAL TEMPLATE -- FIXED, NOT A REDESIGN: every proportion, weight,
+// and color below was measured directly off the approved reference banner
+// files (colors via programmatic pixel sampling -- see the CREAM/GOLD doc
 // comments below for exact source coordinates and sampled values) and is
 // meant to stay fixed. Only the inputs (background image, kicker,
-// subtitle, headline, credit line) are dynamic -- see
-// InstagramBannerPanel.tsx, which is the only caller and owns turning an
-// editorial generation's fields into these parameters.
+// subtitle, headline, credit line) are dynamic.
 //
-// Reference layout (1080x1350, Instagram 4:5 portrait), top to bottom:
+// Editorial reference layout (1080x1350, Instagram 4:5 portrait), top to bottom:
 //   "THE" (small tracked label) -> "RESERVE" (huge Bodoni Moda wordmark)
 //   kicker (tracked, gold)
 //   subtitle, up to 2 lines (tracked, cream)
@@ -35,9 +41,15 @@
 //   nothing a font could reproduce).
 // A dark top-and-bottom gradient sits between the photo and the text so
 // every line stays legible regardless of what's in the source image.
+//
+// NEWS TEMPLATE -- see its own section below for layout + the important
+// PLACEHOLDER COLORS note (no reference image was available when this was
+// built).
 
 export const BANNER_WIDTH = 1080;
 export const BANNER_HEIGHT = 1350;
+
+export type BannerTemplate = 'editorial' | 'news';
 
 const MARGIN = 64;
 
@@ -65,75 +77,80 @@ const MARGIN = 64;
 const CREAM = '#F1F0E6';
 const GOLD = '#BFA076';
 
-/** Sampled brand defaults for the three color-pickable text elements (see the CREAM/GOLD doc comment above). Exported so InstagramBannerPanel.tsx's color pickers default to -- and "Reset to Auto" restores -- these exact values rather than a hardcoded duplicate. The masthead and logo are intentionally absent: the masthead stays auto-fixed to CREAM per the earlier decision, and the logo is a raster asset with no drawable color. */
-export const DEFAULT_ELEMENT_COLORS: Record<'kicker' | 'subtitle' | 'headline', string> = {
+/** Sampled brand defaults for the editorial template's three color-pickable text elements (see the CREAM/GOLD doc comment above). Exported so InstagramBannerPanel.tsx's color pickers default to -- and "Reset to Auto" restores -- these exact values rather than a hardcoded duplicate. The masthead and logo are intentionally absent: the masthead stays auto-fixed to CREAM per the earlier decision, and the logo is a raster asset with no drawable color. */
+export const EDITORIAL_DEFAULT_COLORS: Record<'kicker' | 'subtitle' | 'headline', string> = {
   kicker: GOLD,
   subtitle: CREAM,
   headline: CREAM,
 };
 
-const FONT_DISPLAY = 'Bodoni Moda'; // masthead + headline only
-const FONT_SANS = 'Inter'; // kicker, subtitle, credit line -- unchanged, already loaded site-wide
+const FONT_DISPLAY = 'Bodoni Moda'; // editorial masthead + headline only
+const FONT_SANS = 'Inter'; // both templates -- editorial's kicker/subtitle/credit line at normal weights, news's headline at 800
 
 const LOGO_ASSET_SRC = '/assets/reserve-mark.png';
 
 /**
- * Manual per-element adjustment, layered on top of this template's auto
+ * Manual per-element adjustment, layered on top of a template's auto
  * layout -- never a replacement for it. `fontSize` overrides the
- * element's auto-computed size (kicker/subtitle default to a fixed size,
- * headline to fitHeadline()'s result); `offsetX`/`offsetY` are pixel
- * deltas applied on top of the auto-computed position, not absolute
+ * element's auto-computed size; `offsetX`/`offsetY` are pixel deltas
+ * applied on top of the auto-computed position, not absolute
  * coordinates, so "reset to auto" is simply omitting the override (or
- * setting all three back to undefined/0) rather than needing to know
- * what the auto position was.
+ * setting all four back to undefined/0) rather than needing to know what
+ * the auto position was. `color` works the same way -- undefined means
+ * "use this element's sampled/brand default" (see
+ * EDITORIAL_DEFAULT_COLORS / NEWS_DEFAULT_COLORS below).
  */
 export interface ElementOverride {
   fontSize?: number;
   offsetX?: number;
   offsetY?: number;
-  // `color` -- undefined means "use this element's sampled brand default"
-  // (see DEFAULT_ELEMENT_COLORS below). Only kicker/subtitle/headline read
-  // it; the masthead stays auto-fixed and the logo is a raster asset, so
-  // their overrides never look at this field.
   color?: string;
 }
 
 export interface InstagramBannerOverrides {
+  /** Editorial only. */
   kicker?: ElementOverride;
+  /** Editorial only. */
   subtitle?: ElementOverride;
+  /** Both templates -- editorial's cover headline, or news's black headline (whose `color` sets the non-emphasized word color). */
   headline?: ElementOverride;
+  /** Both templates -- editorial's bottom-right mark, or news's top-left lockup mark. Only fontSize/offsetX/offsetY are read (no color -- it's a raster asset). */
   logo?: ElementOverride;
+  /** News only -- only `color` is read (the admin-selected emphasis phrase's color). Font size/position ride along with the headline's own run, since it's inline text within the same wrapped block, not a separately-positioned element. */
+  emphasis?: ElementOverride;
 }
 
 export interface InstagramBannerParams {
+  /** Which layout to draw. Defaults to 'editorial'. */
+  template?: BannerTemplate;
   /** A same-origin-safe image URL -- an object URL from the image proxy, or a data: URL. Never draw a raw cross-origin source URL directly (canvas export would throw). */
   imageSrc: string;
-  /** Short tracked label, e.g. "LUXE". */
+  /** Editorial only. Short tracked label, e.g. "LUXE". */
   kicker: string;
-  /** One or two lines, e.g. "THE HIGH JEWELRY ISSUE" / "PARIS COUTURE WEEK". A literal "\n" forces the line break; otherwise this wraps automatically at up to 2 lines. */
+  /** Editorial only. One or two lines, e.g. "THE HIGH JEWELRY ISSUE" / "PARIS COUTURE WEEK". A literal "\n" forces the line break; otherwise this wraps automatically at up to 2 lines. */
   subtitle: string;
-  /** The large cover headline, e.g. "PURE OPULENCE". Auto-sized to fit. */
+  /** Both templates. The large headline -- editorial's cover headline, or news's black/red headline. Auto-sized to fit. */
   headline: string;
-  /** Small centered credit line, e.g. "PHOTO: JANE DOE // COURTESY: THE RESERVE". */
+  /** Both templates. Editorial: small centered credit line (forced uppercase). News: small bottom-left source line, drawn exactly as typed -- see the news section below for why it's not forced/prefixed. */
   creditLine: string;
+  /** News only. The exact substring of `headline` the admin wants rendered in red -- case-insensitive match, whole-word (never splits a word across two colors). Not found / empty => the whole headline draws in the base color. This is what makes the emphasis admin-controlled rather than a "last N words" heuristic -- see tokenizeWithEmphasis(). */
+  emphasisPhrase?: string;
   /** Cover-fit focal point, 0-100 per axis (same semantics as CSS object-position -- 50/50 is centered, matching the article editor's crop tool). Defaults to 50/50 when omitted. */
   focalX?: number;
   focalY?: number;
-  /** Manual per-element font-size/position adjustments -- see ElementOverride. Never applies to the "THE"/"RESERVE" masthead, which stays auto-fixed. */
+  /** Manual per-element font-size/position/color adjustments -- see ElementOverride. Never applies to the editorial masthead, which stays auto-fixed. */
   overrides?: InstagramBannerOverrides;
   /**
-   * Pre-computed subject cutout -- same pixel dimensions as the original,
-   * unscaled background image -- composited on top of the "RESERVE"
-   * masthead ONLY, using the identical cover-fit/focal-point transform as
-   * the background photo (see subjectSegmentation.ts, which produces
-   * this). Every other text layer (kicker, subtitle, headline, credit
-   * line, logo) is drawn AFTER the cutout and always renders fully on
-   * top of it -- the subject never covers those, regardless of where it
-   * sits in frame after cropping. This module never imports the
+   * Editorial only. Pre-computed subject cutout -- same pixel dimensions
+   * as the original, unscaled background image -- composited on top of
+   * the "RESERVE" masthead ONLY, using the identical cover-fit/focal-point
+   * transform as the background photo (see subjectSegmentation.ts, which
+   * produces this). Every other text layer is drawn AFTER the cutout and
+   * always renders fully on top of it. This module never imports the
    * segmentation library itself -- that's loaded lazily by the caller
    * (InstagramBannerPanel.tsx) so it's never part of the site-wide
-   * bundle. Optional; when omitted or null, the banner renders exactly
-   * as before (photo fully behind every layer, including the masthead).
+   * bundle. Optional; when omitted or null, the banner renders exactly as
+   * before (photo fully behind every layer, including the masthead).
    */
   subjectCutout?: HTMLCanvasElement | null;
 }
@@ -148,35 +165,40 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-const BODONI_MODA_STYLESHEET_ID = 'reserve-banner-bodoni-moda-font';
-const BODONI_MODA_STYLESHEET_URL = 'https://fonts.googleapis.com/css2?family=Bodoni+Moda:wght@800&display=swap';
+const BANNER_FONTS_STYLESHEET_ID = 'reserve-banner-fonts';
+// Bodoni Moda 800 (editorial masthead/headline) + Inter 800 (news
+// headline) in one request -- Inter's normal weights are already loaded
+// site-wide (src/index.css); this only adds the one heavier weight this
+// module needs, scoped here rather than the global stylesheet so it's
+// never fetched by pages that never open the banner tool.
+const BANNER_FONTS_STYLESHEET_URL = 'https://fonts.googleapis.com/css2?family=Bodoni+Moda:wght@800&family=Inter:wght@800&display=swap';
 
-let bodoniModaStylesheetPromise: Promise<void> | null = null;
+let bannerFontsStylesheetPromise: Promise<void> | null = null;
 
 /**
- * Injects the Bodoni Moda Google Fonts stylesheet once (idempotent),
+ * Injects the banner-fonts Google Fonts stylesheet once (idempotent),
  * scoped to this module rather than added to src/index.css -- see this
  * file's header comment for why. `document.fonts.load()` can only
  * resolve a font whose @font-face rule is already registered in the
  * CSSOM, so this must complete (the <link> itself finish loading) before
- * ensureFontsReady() calls document.fonts.load() for Bodoni Moda, or
- * that call has nothing to resolve against yet.
+ * ensureFontsReady() calls document.fonts.load() for these weights, or
+ * those calls have nothing to resolve against yet.
  */
-function ensureBodoniModaStylesheetInjected(): Promise<void> {
+function ensureBannerFontsStylesheetInjected(): Promise<void> {
   if (typeof document === 'undefined') return Promise.resolve();
 
-  const existing = document.getElementById(BODONI_MODA_STYLESHEET_ID) as HTMLLinkElement | null;
+  const existing = document.getElementById(BANNER_FONTS_STYLESHEET_ID) as HTMLLinkElement | null;
   if (existing) {
     if (existing.dataset.loaded === 'true') return Promise.resolve();
     return new Promise((resolve) => existing.addEventListener('load', () => resolve(), { once: true }));
   }
-  if (bodoniModaStylesheetPromise) return bodoniModaStylesheetPromise;
+  if (bannerFontsStylesheetPromise) return bannerFontsStylesheetPromise;
 
-  bodoniModaStylesheetPromise = new Promise((resolve) => {
+  bannerFontsStylesheetPromise = new Promise((resolve) => {
     const link = document.createElement('link');
-    link.id = BODONI_MODA_STYLESHEET_ID;
+    link.id = BANNER_FONTS_STYLESHEET_ID;
     link.rel = 'stylesheet';
-    link.href = BODONI_MODA_STYLESHEET_URL;
+    link.href = BANNER_FONTS_STYLESHEET_URL;
     link.onload = () => {
       link.dataset.loaded = 'true';
       resolve();
@@ -187,24 +209,28 @@ function ensureBodoniModaStylesheetInjected(): Promise<void> {
     link.onerror = () => resolve();
     document.head.appendChild(link);
   });
-  return bodoniModaStylesheetPromise;
+  return bannerFontsStylesheetPromise;
 }
 
 /**
- * Waits for the exact font weights this template draws with to be ready,
- * so canvas text never silently falls back to a system font before the
- * webfont finishes loading -- then explicitly *confirms* Bodoni Moda
- * actually loaded (document.fonts.check()), rather than assuming the
- * await above means it worked. A failed confirmation is logged loudly:
- * if fonts.googleapis.com is unreachable, the masthead/headline would
- * otherwise silently render in a fallback serif with no visible error.
+ * Waits for the exact font weights either template draws with to be
+ * ready, so canvas text never silently falls back to a system font
+ * before the webfont finishes loading -- then explicitly *confirms* both
+ * heavy weights actually loaded (document.fonts.check()), rather than
+ * assuming the await above means it worked. A failed confirmation is
+ * logged loudly: if fonts.googleapis.com is unreachable, the affected
+ * text would otherwise silently render in a fallback/synthetic-bold face
+ * with no visible error. Inter's own normal weights are already
+ * confirmed-loaded site-wide, so a failed Inter 800 load still falls back
+ * to a real (if lighter) Inter rather than a completely different font.
  */
 async function ensureFontsReady(): Promise<void> {
   if (typeof document === 'undefined' || !('fonts' in document)) return;
 
-  await ensureBodoniModaStylesheetInjected();
+  await ensureBannerFontsStylesheetInjected();
   await Promise.all([
     document.fonts.load(`800 100px "${FONT_DISPLAY}"`),
+    document.fonts.load(`800 100px "${FONT_SANS}"`),
     document.fonts.load(`600 32px "${FONT_SANS}"`),
     document.fonts.load(`500 16px "${FONT_SANS}"`),
   ]);
@@ -213,7 +239,13 @@ async function ensureFontsReady(): Promise<void> {
   if (!document.fonts.check(`800 100px "${FONT_DISPLAY}"`)) {
     // eslint-disable-next-line no-console
     console.warn(
-      `[Instagram Banner] "${FONT_DISPLAY}" did not report as loaded -- the masthead/headline will likely render in a fallback serif instead. Check network access to fonts.googleapis.com.`,
+      `[Instagram Banner] "${FONT_DISPLAY}" did not report as loaded -- the editorial masthead/headline will likely render in a fallback serif instead. Check network access to fonts.googleapis.com.`,
+    );
+  }
+  if (!document.fonts.check(`800 100px "${FONT_SANS}"`)) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[Instagram Banner] "${FONT_SANS}" at weight 800 did not report as loaded -- the news headline will likely render in a synthetically-bolded lighter weight instead. Check network access to fonts.googleapis.com.`,
     );
   }
 }
@@ -237,14 +269,14 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
   return lines;
 }
 
-/** Wraps `text` at explicit "\n" breaks first, then word-wraps each resulting segment, capped at `maxLines` total (extra lines are dropped -- used for the subtitle block, which the template gives a fixed two-line slot). */
+/** Wraps `text` at explicit "\n" breaks first, then word-wraps each resulting segment, capped at `maxLines` total (extra lines are dropped -- used for the editorial subtitle block, which the template gives a fixed two-line slot). */
 function wrapWithExplicitBreaks(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines: number): string[] {
   const segments = text.split('\n').map((s) => s.trim()).filter(Boolean);
   const lines = segments.flatMap((seg) => wrapText(ctx, seg, maxWidth));
   return lines.slice(0, maxLines);
 }
 
-/** Shrinks the headline font size until it wraps within `maxLines`, down to `minSize`. Never truncates the text itself -- if it still doesn't fit at `minSize`, it's drawn at `minSize` with however many lines that takes rather than dropping words. */
+/** Shrinks the editorial headline font size until it wraps within `maxLines`, down to `minSize`. Never truncates the text itself -- if it still doesn't fit at `minSize`, it's drawn at `minSize` with however many lines that takes rather than dropping words. */
 function fitHeadline(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -274,13 +306,13 @@ function drawTrackedText(ctx: CanvasRenderingContext2D, text: string, x: number,
 
 /**
  * Finds the font size at which `text` measures as close as possible to
- * `targetWidth` (clamped to [minSize, maxSize]). Used for the "RESERVE"
- * masthead, which the reference spans nearly the full canvas width at --
- * a fixed font size can't guarantee that (measured width scales with the
- * actual glyphs, not a size chosen by eye), so this measures at a
- * reference size and scales proportionally, matching how fitHeadline()
- * already shrinks-to-fit the bottom headline, just solving for width
- * instead of line count.
+ * `targetWidth` (clamped to [minSize, maxSize]). Used for the editorial
+ * "RESERVE" masthead, which the reference spans nearly the full canvas
+ * width at -- a fixed font size can't guarantee that (measured width
+ * scales with the actual glyphs, not a size chosen by eye), so this
+ * measures at a reference size and scales proportionally, matching how
+ * fitHeadline() already shrinks-to-fit the bottom headline, just solving
+ * for width instead of line count.
  */
 function fitTextToWidth(
   ctx: CanvasRenderingContext2D,
@@ -299,35 +331,50 @@ function fitTextToWidth(
   return Math.max(minSize, Math.min(maxSize, fitted));
 }
 
+export interface CoverFit {
+  drawX: number;
+  drawY: number;
+  drawWidth: number;
+  drawHeight: number;
+}
+
 /**
- * Renders THE RESERVE's Instagram banner template onto `canvas` (sized to
- * BANNER_WIDTH x BANNER_HEIGHT internally, regardless of the canvas
- * element's CSS display size). Never throws for a missing/short text
- * field -- an empty string simply draws nothing for that line, so a
- * partially-filled preview still renders instead of failing outright.
+ * Cover-fit math (crop-to-fill, like CSS `object-fit: cover`) for placing
+ * an `imgW`x`imgH` image into a `destW`x`destH` box, cropped around a
+ * 0-100/axis focal point (50/50 = centered) -- same semantics as CSS
+ * object-position and the article editor's crop tool. Returns coordinates
+ * relative to the destination box's own origin (0,0 = the box's top-left,
+ * NOT the canvas) -- callers translate by the box's own position before
+ * drawImage. Shared by both templates (editorial's full-canvas photo,
+ * news's boxed photo) so there's exactly one cover-fit implementation.
+ * Pure and canvas-free (just arithmetic), so it's exported for direct
+ * unit testing (scripts/test-news-banner-template.ts) alongside
+ * tokenizeWithEmphasis below.
  */
-export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: InstagramBannerParams): Promise<void> {
-  canvas.width = BANNER_WIDTH;
-  canvas.height = BANNER_HEIGHT;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas 2D context is not available in this browser.');
+export function computeCoverFit(imgW: number, imgH: number, destW: number, destH: number, focalX: number, focalY: number): CoverFit {
+  const scale = Math.max(destW / imgW, destH / imgH);
+  const drawWidth = imgW * scale;
+  const drawHeight = imgH * scale;
+  const drawX = -(drawWidth - destW) * (focalX / 100);
+  const drawY = -(drawHeight - destH) * (focalY / 100);
+  return { drawX, drawY, drawWidth, drawHeight };
+}
 
-  const [img, logoImg] = await Promise.all([loadImage(params.imageSrc), loadImage(LOGO_ASSET_SRC)]);
-  await ensureFontsReady();
+// ============================================================================
+// EDITORIAL TEMPLATE
+// ============================================================================
 
-  // 1. Background image, cover-fit, cropped around the given focal point
-  // (defaults to centered -- same 0-100/axis semantics as CSS
-  // object-position, matching the article editor's crop tool so the two
-  // features share one mental model even though this one draws via
-  // Canvas instead of CSS).
-  const scale = Math.max(BANNER_WIDTH / img.width, BANNER_HEIGHT / img.height);
-  const drawWidth = img.width * scale;
-  const drawHeight = img.height * scale;
+function renderEditorialTemplate(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  logoImg: HTMLImageElement,
+  params: InstagramBannerParams,
+): void {
+  // 1. Background image, cover-fit, cropped around the given focal point.
   const focalX = params.focalX ?? 50;
   const focalY = params.focalY ?? 50;
-  const drawX = -(drawWidth - BANNER_WIDTH) * (focalX / 100);
-  const drawY = -(drawHeight - BANNER_HEIGHT) * (focalY / 100);
-  ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+  const fit = computeCoverFit(img.width, img.height, BANNER_WIDTH, BANNER_HEIGHT, focalX, focalY);
+  ctx.drawImage(img, fit.drawX, fit.drawY, fit.drawWidth, fit.drawHeight);
 
   // 2. Top and bottom dark gradients so the wordmark/kicker/subtitle and
   // the headline/credit line stay legible over any source photo.
@@ -348,18 +395,12 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
   let cursorY = MARGIN + 20;
 
   // 3. "THE" / "RESERVE" wordmark -- fixed brand text, never dynamic
-  // content, but the masthead's SIZE is fit to width: the reference
-  // spans nearly the full canvas width, and a fixed pixel size can't
-  // guarantee that (a fixed 100px measured only ~52% of contentWidth in
-  // Bodoni Moda -- the earlier bug this replaces). Every gap below it is
-  // computed as a multiple of the ACTUAL fitted size (not a flat pixel
-  // constant tuned for one specific size), so spacing stays correct
-  // regardless of how large the fitted masthead turns out to be -- e.g.
-  // for a longer/shorter wordmark, or if the target width or font ever
-  // changes. `ascent(size)` approximates a serif font's cap-height, i.e.
-  // how far a following baseline needs to sit below this one's baseline
-  // to clear its glyphs; it's the standard rule of thumb for laying out
-  // stacked text on a canvas without real font-metrics APIs.
+  // content, but the masthead's SIZE is fit to width: the reference spans
+  // nearly the full canvas width, and a fixed pixel size can't guarantee
+  // that. Every gap below it is computed as a multiple of the ACTUAL
+  // fitted size (not a flat pixel constant), so spacing stays correct
+  // regardless of how large the fitted masthead turns out to be.
+  // `ascent(size)` approximates a serif font's cap-height.
   const ascent = (size: number) => size * 0.72;
 
   ctx.fillStyle = 'rgba(241,240,230,0.9)';
@@ -373,17 +414,13 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
   ctx.fillText('RESERVE', MARGIN, cursorY);
 
   // 3b. Subject-over-text compositing -- drawn HERE specifically, right
-  // after the masthead and before every other text layer, so the
-  // subject can only ever sit in front of "THE"/"RESERVE" (the intended
-  // "hair over the letters" effect) and never in front of the kicker,
-  // subtitle, headline, credit line, or logo drawn below. Uses the exact
-  // same scale/drawX/drawY that placed the background photo in step 1,
-  // so it always lines up pixel-for-pixel with the photo underneath it
-  // regardless of whatever crop/focal point is set -- it isn't computed
-  // once and then separately positioned, it's the same photo redrawn
-  // with the subject isolated, through the same transform.
+  // after the masthead and before every other text layer, so the subject
+  // can only ever sit in front of "THE"/"RESERVE" and never in front of
+  // the kicker, subtitle, headline, credit line, or logo drawn below.
+  // Uses the exact same fit transform that placed the background photo in
+  // step 1, so it always lines up pixel-for-pixel regardless of crop.
   if (params.subjectCutout) {
-    ctx.drawImage(params.subjectCutout, drawX, drawY, drawWidth, drawHeight);
+    ctx.drawImage(params.subjectCutout, fit.drawX, fit.drawY, fit.drawWidth, fit.drawHeight);
   }
 
   // 4. Kicker (gold). Gap below the masthead scales with its actual size.
@@ -465,17 +502,273 @@ export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: I
 
   // 8. "R." logo mark, bottom-right -- the fixed raster asset
   // (public/assets/reserve-mark.png), placed via drawImage exactly as
-  // produced from the approved reference file (circular badge, embedded
-  // "THE RESERVE" wordmark, separate gold accent dot, all baked into the
-  // asset's own pixels) -- never recreated with text or shapes.
-  // `fontSize` doubles as the logo's edge length here (no font involved).
+  // produced from the approved reference file -- never recreated with
+  // text or shapes. `fontSize` doubles as the logo's edge length here (no
+  // font involved).
   const logoSize = overrides.logo?.fontSize ?? 84;
   const logoX = BANNER_WIDTH - MARGIN - logoSize + (overrides.logo?.offsetX ?? 0);
   const logoY = creditY - logoSize + 12 + (overrides.logo?.offsetY ?? 0);
   ctx.drawImage(logoImg, logoX, logoY, logoSize, logoSize);
 }
 
-/** Converts the rendered canvas to a PNG Blob (used for both the Supabase Storage upload and the manual download button). */
+// ============================================================================
+// NEWS TEMPLATE -- second banner layout, selected via params.template === 'news'
+// ============================================================================
+//
+// ⚠️ PLACEHOLDER COLORS -- NOT SAMPLED. Every other color constant in this
+// file (CREAM, GOLD above) was measured from an approved reference file
+// via the pixel-sampling method described in their own doc comment. No
+// reference image was received for the news template when this was
+// built, so NEWS_BG / NEWS_BLACK / NEWS_RED below are provisional,
+// deliberately plain choices (a warm off-white, near-black, and a common
+// editorial red) rather than sampled values -- do not treat them as final
+// brand colors. NEWS_MUTED/NEWS_DIVIDER are derived from NEWS_BLACK and
+// should be re-derived if NEWS_BLACK changes. Once the reference image is
+// available, replace these constants (color-sample the same rigorous way
+// as CREAM/GOLD) -- everything downstream (DEFAULT colors, overrides,
+// tests) reads from these three names, so no other code needs to change.
+const NEWS_BG = '#F4F1EA';
+const NEWS_BLACK = '#111111';
+const NEWS_RED = '#C8102E';
+const NEWS_MUTED = 'rgba(17,17,17,0.55)';
+const NEWS_DIVIDER = 'rgba(17,17,17,0.15)';
+
+/** Sampled(-pending) brand defaults for the news template's two color-pickable elements. See the PLACEHOLDER COLORS note above -- these are provisional. Exported for the same reason as EDITORIAL_DEFAULT_COLORS: the color picker's default and "Reset to Auto" both read from here, never a hardcoded duplicate. */
+export const NEWS_DEFAULT_COLORS: Record<'headline' | 'emphasis', string> = {
+  headline: NEWS_BLACK,
+  emphasis: NEWS_RED,
+};
+
+const NEWS_HEADLINE_WEIGHT = 800; // Inter 800 -- see ensureFontsReady()
+
+/** Fixed photo box (right side of the news template) -- see the template spec's "confined to a fixed box" requirement. Exported so InstagramBannerPanel.tsx's FocalPointEditor can be given this exact aspect ratio (rather than the full-canvas ratio the editorial template's crop uses), so the crop preview matches what actually renders. */
+export const NEWS_PHOTO_BOX = { width: 380, height: 480 };
+
+export interface EmphasisWord {
+  word: string;
+  emphasized: boolean;
+}
+
+/**
+ * Splits `text` into uppercased words, flagging each whole word that
+ * overlaps `emphasisPhrase` (case-insensitive substring match) as
+ * emphasized -- this is what makes the red emphasis text admin-controlled
+ * rather than a hardcoded "last N words" heuristic: the admin types or
+ * pastes the exact phrase from the headline they want highlighted, and
+ * this only ever colors that phrase. A word is marked emphasized if the
+ * match touches ANY of its characters -- never splits a single word
+ * across two colors. Falls back to "no emphasis" (every word
+ * unemphasized) when `emphasisPhrase` is empty or isn't found anywhere in
+ * `text` -- never throws, matching this module's existing
+ * never-throws-on-a-missing-field convention.
+ *
+ * Pure and DOM/canvas-free by design, so it's independently unit-tested
+ * (scripts/test-news-banner-template.ts) without needing a real canvas or
+ * font metrics.
+ */
+export function tokenizeWithEmphasis(text: string, emphasisPhrase: string): EmphasisWord[] {
+  const trimmed = text.trim();
+  const phrase = emphasisPhrase.trim();
+  const wordPattern = /\S+/g;
+
+  const noEmphasis = () => trimmed.match(wordPattern)?.map((word) => ({ word: word.toUpperCase(), emphasized: false })) ?? [];
+
+  if (!phrase) return noEmphasis();
+
+  const matchIndex = trimmed.toUpperCase().indexOf(phrase.toUpperCase());
+  if (matchIndex === -1) return noEmphasis();
+  const matchEnd = matchIndex + phrase.length;
+
+  const words: EmphasisWord[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = wordPattern.exec(trimmed)) !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+    const emphasized = start < matchEnd && end > matchIndex;
+    words.push({ word: m[0].toUpperCase(), emphasized });
+  }
+  return words;
+}
+
+/** Greedy word-wrap over pre-tokenized {word, emphasized} pairs -- same algorithm as wrapText(), just carrying the emphasis flag through instead of operating on a plain string. ctx.font must already be set before calling. */
+function wrapEmphasisWordsToLines(ctx: CanvasRenderingContext2D, words: EmphasisWord[], maxWidth: number): EmphasisWord[][] {
+  if (words.length === 0) return [];
+  const lines: EmphasisWord[][] = [];
+  let current: EmphasisWord[] = [words[0]];
+  let currentText = words[0].word;
+  for (let i = 1; i < words.length; i++) {
+    const candidateText = `${currentText} ${words[i].word}`;
+    if (ctx.measureText(candidateText).width <= maxWidth) {
+      current.push(words[i]);
+      currentText = candidateText;
+    } else {
+      lines.push(current);
+      current = [words[i]];
+      currentText = words[i].word;
+    }
+  }
+  lines.push(current);
+  return lines;
+}
+
+/** Shrinks the news headline font size until it wraps within `maxLines`, down to `minSize` -- same shrink-to-fit strategy as fitHeadline(), adapted for the {word, emphasized} token list. */
+function fitNewsHeadline(
+  ctx: CanvasRenderingContext2D,
+  words: EmphasisWord[],
+  maxWidth: number,
+  maxLines: number,
+  maxSize: number,
+  minSize: number,
+): { fontSize: number; lines: EmphasisWord[][] } {
+  for (let size = maxSize; size >= minSize; size -= 4) {
+    ctx.font = `${NEWS_HEADLINE_WEIGHT} ${size}px "${FONT_SANS}"`;
+    const lines = wrapEmphasisWordsToLines(ctx, words, maxWidth);
+    if (lines.length <= maxLines) return { fontSize: size, lines };
+  }
+  ctx.font = `${NEWS_HEADLINE_WEIGHT} ${minSize}px "${FONT_SANS}"`;
+  return { fontSize: minSize, lines: wrapEmphasisWordsToLines(ctx, words, maxWidth) };
+}
+
+/** Draws one wrapped headline line, switching fillStyle per word run (base vs. emphasis color) -- a trailing space is included on every word but the line's last so runs of the same color still read as one continuous phrase, not visibly separate fillText calls. */
+function drawEmphasisLine(ctx: CanvasRenderingContext2D, lineWords: EmphasisWord[], x: number, y: number, baseColor: string, emphasisColor: string): void {
+  let cursorX = x;
+  for (let i = 0; i < lineWords.length; i++) {
+    const { word, emphasized } = lineWords[i];
+    const text = i === lineWords.length - 1 ? word : `${word} `;
+    ctx.fillStyle = emphasized ? emphasisColor : baseColor;
+    ctx.fillText(text, cursorX, y);
+    cursorX += ctx.measureText(text).width;
+  }
+}
+
+function renderNewsTemplate(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  logoImg: HTMLImageElement,
+  params: InstagramBannerParams,
+): void {
+  const overrides = params.overrides ?? {};
+
+  // 1. Background -- light/off-white fill, not a full-bleed photo.
+  ctx.fillStyle = NEWS_BG;
+  ctx.fillRect(0, 0, BANNER_WIDTH, BANNER_HEIGHT);
+  ctx.textBaseline = 'alphabetic';
+
+  // 2. Top bar -- logo lockup (left) + site URL (right) + a thin divider
+  // beneath both. Logo size/position reuses the `logo` override slot
+  // (same one the editorial template's bottom-right mark uses) --
+  // repositioned here, not a second control.
+  const topY = 56;
+  const logoSize = overrides.logo?.fontSize ?? 64;
+  const logoX = MARGIN + (overrides.logo?.offsetX ?? 0);
+  const logoYPos = topY + (overrides.logo?.offsetY ?? 0);
+  ctx.drawImage(logoImg, logoX, logoYPos, logoSize, logoSize);
+
+  const wordmarkX = MARGIN + logoSize + 16;
+  ctx.fillStyle = NEWS_BLACK;
+  ctx.font = `700 22px "${FONT_SANS}"`;
+  ctx.fillText('THE RESERVE', wordmarkX, topY + logoSize * 0.42);
+  ctx.fillStyle = NEWS_MUTED;
+  ctx.font = `600 10px "${FONT_SANS}"`;
+  drawTrackedText(ctx, 'MAGAZINE', wordmarkX, topY + logoSize * 0.42 + 18, 3);
+
+  const siteUrl = 'WWW.THERESERVEMAG.COM';
+  ctx.fillStyle = NEWS_MUTED;
+  ctx.font = `500 13px "${FONT_SANS}"`;
+  const siteUrlWidth = ctx.measureText(siteUrl).width;
+  ctx.fillText(siteUrl, BANNER_WIDTH - MARGIN - siteUrlWidth, topY + logoSize * 0.5);
+
+  const dividerY = topY + logoSize + 24;
+  ctx.strokeStyle = NEWS_DIVIDER;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(MARGIN, dividerY);
+  ctx.lineTo(BANNER_WIDTH - MARGIN, dividerY);
+  ctx.stroke();
+
+  // 3. Photo box -- confined to a fixed box on the right, not full-bleed.
+  // Same cover-fit + focal-point math as the editorial template's
+  // full-canvas photo (computeCoverFit), just clipped to this box.
+  const boxX = BANNER_WIDTH - MARGIN - NEWS_PHOTO_BOX.width;
+  const boxY = dividerY + 48;
+  const focalX = params.focalX ?? 50;
+  const focalY = params.focalY ?? 50;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(boxX, boxY, NEWS_PHOTO_BOX.width, NEWS_PHOTO_BOX.height);
+  ctx.clip();
+  const fit = computeCoverFit(img.width, img.height, NEWS_PHOTO_BOX.width, NEWS_PHOTO_BOX.height, focalX, focalY);
+  ctx.drawImage(img, boxX + fit.drawX, boxY + fit.drawY, fit.drawWidth, fit.drawHeight);
+  ctx.restore();
+  ctx.strokeStyle = NEWS_BLACK;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(boxX, boxY, NEWS_PHOTO_BOX.width, NEWS_PHOTO_BOX.height);
+
+  // 4. Headline -- bold black all-caps sans, left column left of the photo
+  // box, auto-wrapping, with the admin-controlled emphasis phrase in red.
+  const headlineMaxWidth = boxX - MARGIN - 32;
+  if (params.headline.trim()) {
+    const words = tokenizeWithEmphasis(params.headline, params.emphasisPhrase ?? '');
+    let fontSize: number;
+    let lines: EmphasisWord[][];
+    if (overrides.headline?.fontSize) {
+      fontSize = overrides.headline.fontSize;
+      ctx.font = `${NEWS_HEADLINE_WEIGHT} ${fontSize}px "${FONT_SANS}"`;
+      lines = wrapEmphasisWordsToLines(ctx, words, headlineMaxWidth);
+    } else {
+      ({ fontSize, lines } = fitNewsHeadline(ctx, words, headlineMaxWidth, 6, 72, 36));
+    }
+    ctx.font = `${NEWS_HEADLINE_WEIGHT} ${fontSize}px "${FONT_SANS}"`;
+    const lineHeight = fontSize * 1.12;
+    const headlineX = MARGIN + (overrides.headline?.offsetX ?? 0);
+    const baseColor = overrides.headline?.color ?? NEWS_BLACK;
+    const emphasisColor = overrides.emphasis?.color ?? NEWS_RED;
+    let y = boxY + fontSize + (overrides.headline?.offsetY ?? 0);
+    for (const line of lines) {
+      drawEmphasisLine(ctx, line, headlineX, y, baseColor, emphasisColor);
+      y += lineHeight;
+    }
+  }
+
+  // 5. Source line, bottom-left -- drawn exactly as typed, no forced
+  // uppercase/prefix. InstagramBannerPanel.tsx seeds this field's default
+  // text as "Source: <publisher>" (same seeding pattern as the editorial
+  // template's "COURTESY: <publisher>" credit line), but the admin's own
+  // edits are never rewritten by this renderer.
+  if (params.creditLine.trim()) {
+    ctx.fillStyle = NEWS_MUTED;
+    ctx.font = `500 15px "${FONT_SANS}"`;
+    ctx.fillText(params.creditLine.trim(), MARGIN, BANNER_HEIGHT - 40);
+  }
+}
+
+// ============================================================================
+
+/**
+ * Renders THE RESERVE's Instagram banner (whichever template
+ * `params.template` selects, defaulting to 'editorial') onto `canvas`
+ * (sized to BANNER_WIDTH x BANNER_HEIGHT internally, regardless of the
+ * canvas element's CSS display size). Never throws for a missing/short
+ * text field -- an empty string simply draws nothing for that line, so a
+ * partially-filled preview still renders instead of failing outright.
+ */
+export async function renderInstagramBanner(canvas: HTMLCanvasElement, params: InstagramBannerParams): Promise<void> {
+  canvas.width = BANNER_WIDTH;
+  canvas.height = BANNER_HEIGHT;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D context is not available in this browser.');
+
+  const [img, logoImg] = await Promise.all([loadImage(params.imageSrc), loadImage(LOGO_ASSET_SRC)]);
+  await ensureFontsReady();
+
+  if ((params.template ?? 'editorial') === 'news') {
+    renderNewsTemplate(ctx, img, logoImg, params);
+  } else {
+    renderEditorialTemplate(ctx, img, logoImg, params);
+  }
+}
+
+/** Converts the rendered canvas to a PNG Blob (used for both the R2 banner upload and the manual download button). */
 export function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob((blob) => {

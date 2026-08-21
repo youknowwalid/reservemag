@@ -36,6 +36,15 @@ export function validateGenerationRequestBody(body: unknown): GenerationRequestG
     return { ok: false, status: 400, error: `A maximum of ${MAX_SOURCE_URLS_PER_JOB} source URLs are allowed per editorial job.` };
   }
 
+  // Separate from `contentType` above -- see EditorialGenerationInput's
+  // doc comment on `bannerTemplate` for why these are two different
+  // fields, not one repurposed. Validated strictly (rejected if present
+  // and not one of the two known values) rather than silently coerced,
+  // matching this guard's existing style for sourceUrls/confirmed.
+  if (b.bannerTemplate !== undefined && b.bannerTemplate !== 'editorial' && b.bannerTemplate !== 'news') {
+    return { ok: false, status: 400, error: "bannerTemplate must be 'editorial' or 'news' when provided." };
+  }
+
   return {
     ok: true,
     input: {
@@ -43,6 +52,7 @@ export function validateGenerationRequestBody(body: unknown): GenerationRequestG
       subject: typeof b.subject === 'string' ? b.subject : undefined,
       requestedAngle: typeof b.requestedAngle === 'string' ? b.requestedAngle : undefined,
       contentType: typeof b.contentType === 'string' ? b.contentType : undefined,
+      bannerTemplate: b.bannerTemplate as 'editorial' | 'news' | undefined,
     },
   };
 }

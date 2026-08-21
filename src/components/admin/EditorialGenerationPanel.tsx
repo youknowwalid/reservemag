@@ -29,7 +29,20 @@ function generateEditorialSlug(title: string): string {
 }
 function estimateReadTime(text: string): string { return `${Math.max(1, Math.ceil(text.trim().split(/\s+/).filter(Boolean).length / 220))} min`; }
 
-export default function EditorialGenerationPanel() {
+interface EditorialGenerationPanelProps {
+  /**
+   * Which Factory this instance is -- 'editorial' (default) or 'news'.
+   * This is the ONLY thing that differs between Editorial Factory and
+   * News Factory: same generation pipeline, same publish flow, same
+   * component, just a different `bannerTemplate` sent with the request
+   * and a different default banner template on the InstagramBannerPanel
+   * mounted below. See AdminPanel.tsx for the two nav entries that each
+   * mount this component with a different `factoryKind`.
+   */
+  factoryKind?: 'editorial' | 'news';
+}
+
+export default function EditorialGenerationPanel({ factoryKind = 'editorial' }: EditorialGenerationPanelProps) {
   const [subject, setSubject] = useState('');
   const [sourceUrl1, setSourceUrl1] = useState('');
   const [sourceUrl2, setSourceUrl2] = useState('');
@@ -58,7 +71,7 @@ export default function EditorialGenerationPanel() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) throw new Error('You must be signed in as an admin to generate an editorial.');
-      const res = await fetch('/api/admin/editorial/generate', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ sourceUrls, subject: subject.trim() || undefined, requestedAngle: requestedAngle.trim() || undefined, contentType: contentType.trim() || undefined, confirmed: true }) });
+      const res = await fetch('/api/admin/editorial/generate', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` }, body: JSON.stringify({ sourceUrls, subject: subject.trim() || undefined, requestedAngle: requestedAngle.trim() || undefined, contentType: contentType.trim() || undefined, bannerTemplate: factoryKind, confirmed: true }) });
       const parsed = await parseEditorialResponse(res);
       // `parsed.ok === false` (not `!parsed.ok`) so the discriminated union narrows correctly under this project's non-strict tsconfig.
       if (parsed.ok === false) throw new Error(parsed.message);
@@ -97,7 +110,7 @@ export default function EditorialGenerationPanel() {
   const publishedUrl = publishedSlug ? `/${publishedSlug}` : null;
 
   return <div className="space-y-6 bg-zinc-900/30 p-8 border border-white/5">
-    <div><h2 className="text-xl font-serif">Editorial Factory — Create Editorial</h2><p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-1">Reserve Editorial Intelligence Engine — generate, review, design, then publish</p></div>
+    <div><h2 className="text-xl font-serif">{factoryKind === 'news' ? 'News Factory — Create News Story' : 'Editorial Factory — Create Editorial'}</h2><p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-1">Reserve Editorial Intelligence Engine — generate, review, design, then publish{factoryKind === 'news' ? ' (News banner template)' : ''}</p></div>
 
     <form onSubmit={handleGenerateClick} className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -137,7 +150,7 @@ export default function EditorialGenerationPanel() {
         <div className="border border-white/10 bg-black/30 p-5 space-y-3"><div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-zinc-500"><ImageIcon size={13} /> Recommended source image</div>{cover?.imageUrl && <img src={cover.imageUrl} alt="Recommended source" className="max-h-80 max-w-full object-contain border border-white/10" />}<p className="text-xs text-zinc-500">{cover?.imageReason || pkg.imageReason}</p></div>
         {result.qa?.checks?.length ? <div className="space-y-2"><div className="text-[10px] uppercase tracking-widest text-zinc-500">QA Notes</div>{result.qa.checks.map((check) => <div key={`${check.check}-${check.message}`} className="flex gap-2 text-xs text-zinc-500"><AlertTriangle size={12} className={check.severity === 'FAIL' ? 'text-rose-400' : 'text-amber-400'} /><span><strong className="text-zinc-300">{check.check}:</strong> {check.message}</span></div>)}</div> : null}
         <div className="space-y-2"><div className="text-[10px] uppercase tracking-widest text-zinc-500">Sources Used</div>{pkg.sourcesUsed.map((sourceId) => { const source = result.sources.find((s) => s.sourceId === sourceId); return <a key={sourceId} href={source?.url} target="_blank" rel="noreferrer" className="block bg-black/40 border border-white/5 p-3 text-xs text-zinc-400 hover:text-white">{sourceId} — {source?.title || source?.url || 'Source'}</a>; })}</div>
-        {result.status === 'SUCCESS' && <InstagramBannerPanel recordId={result.id} editorialPackage={pkg} sources={result.sources} />}
+        {result.status === 'SUCCESS' && <InstagramBannerPanel recordId={result.id} defaultTemplate={factoryKind} editorialPackage={pkg} sources={result.sources} />}
         {pkg.warnings.length > 0 && <div className="space-y-2"><div className="text-[10px] uppercase tracking-widest text-zinc-500">Model Warnings</div>{pkg.warnings.map((w, i) => <div key={i} className="text-xs p-3 border border-amber-500/20 bg-amber-500/5 text-amber-400">{w}</div>)}</div>}
         {!publishedArticleId && <div className="border border-amber-500/30 bg-amber-500/5 p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4"><div><div className="text-amber-400 text-xs font-bold uppercase tracking-widest">Generated — Not Published</div><div className="text-zinc-400 text-xs mt-1">Review the article and cover above. Nothing is public until you confirm.</div></div><button onClick={() => { setPublishError(null); setShowPublishConfirm(true); }} disabled={publishing || !cover?.imageUrl} className="px-6 py-3 bg-white text-black text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50"><Send size={14} /> Confirm &amp; Publish Now</button></div>}
       </>}
