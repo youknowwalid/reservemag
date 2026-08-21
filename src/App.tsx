@@ -14,6 +14,8 @@ import AdminPanel from './components/AdminPanel';
 import AdminLogin from './components/AdminLogin';
 import ArticlePage from './pages/ArticlePage';
 import GetFeaturedPage from './pages/GetFeaturedPage';
+import PrivacyPolicyPage from './pages/legal/PrivacyPolicyPage';
+import TermsOfServicePage from './pages/legal/TermsOfServicePage';
 import ContributorSignupPage from './pages/contribute/ContributorSignupPage';
 import ContributorVerifyEmailPage from './pages/contribute/ContributorVerifyEmailPage';
 import ContributorProfilePage from './pages/contribute/ContributorProfilePage';
@@ -230,6 +232,9 @@ export default function App() {
               }
             />
             <Route path="/get-featured" element={<GetFeaturedPage />} />
+            {/* Public, unauthenticated -- linked ONLY from the footer (Footer.tsx). */}
+            <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
+            <Route path="/terms-of-service" element={<TermsOfServicePage />} />
             <Route path="/:slug" element={<ArticlePage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
