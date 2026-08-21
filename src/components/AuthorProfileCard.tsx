@@ -1,10 +1,18 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X } from 'lucide-react';
-import { Author } from '../types';
+import { Contributor } from '../types';
+
+const CATEGORY_LABELS: Record<string, string> = {
+  journalist: 'Journalist',
+  photographer: 'Photographer',
+  videographer: 'Videographer',
+  other: 'Contributor',
+};
 
 interface AuthorProfileCardProps {
-  author: Author;
+  /** Reads from the unified `contributors` table -- either a real registered contributor or a migrated legacy byline entry (accountType distinguishes them, but this card doesn't need to care: it just shows whichever of category/legacyDesignation+legacyRole is populated). */
+  author: Contributor;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -44,16 +52,16 @@ export default function AuthorProfileCard({ author, isOpen, onClose }: AuthorPro
 
               <div className="mb-6 relative">
                 <div className="w-24 h-24 rounded-full overflow-hidden border border-white/5 grayscale hover:grayscale-0 transition-all duration-700">
-                  {author.imageUrl ? (
-                    <img 
-                      src={author.imageUrl} 
-                      alt={author.name} 
+                  {author.profilePhotoUrl ? (
+                    <img
+                      src={author.profilePhotoUrl}
+                      alt={author.fullName}
                       className="w-full h-full object-cover"
                       referrerPolicy="no-referrer"
                     />
                   ) : (
                     <div className="w-full h-full bg-zinc-900 flex items-center justify-center text-zinc-700 font-serif text-2xl uppercase italic">
-                      {author.name.charAt(0)}
+                      {author.fullName.charAt(0)}
                     </div>
                   )}
                 </div>
@@ -61,17 +69,23 @@ export default function AuthorProfileCard({ author, isOpen, onClose }: AuthorPro
 
               <div className="space-y-4">
                 <div>
-                  <h3 className="text-xl font-serif text-white uppercase tracking-wider mb-1">{author.name}</h3>
+                  <h3 className="text-xl font-serif text-white uppercase tracking-wider mb-1">{author.fullName}</h3>
                   <div className="h-0.5 w-8 bg-reserve-accent/30 mx-auto" />
                 </div>
-                
+
+                {/* Legacy rows carry their original designation/role text
+                    verbatim (preserved by the migration); a registered
+                    contributor shows their category instead -- there's no
+                    "role" concept for those. */}
                 <div className="space-y-1">
                   <p className="text-[10px] uppercase tracking-[0.2em] text-reserve-accent font-medium">
-                    {author.designation}
+                    {author.accountType === 'legacy' ? author.legacyDesignation : CATEGORY_LABELS[author.category || ''] || author.category}
                   </p>
-                  <p className="text-[10px] uppercase tracking-widest text-zinc-500 italic">
-                    {author.role}
-                  </p>
+                  {author.accountType === 'legacy' && author.legacyRole && (
+                    <p className="text-[10px] uppercase tracking-widest text-zinc-500 italic">
+                      {author.legacyRole}
+                    </p>
+                  )}
                 </div>
               </div>
 

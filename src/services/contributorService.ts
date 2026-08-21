@@ -8,12 +8,16 @@ const PHOTO_BUCKET = 'contributor-photos';
 function rowToContributor(row: any): Contributor {
   return {
     id: row.id,
-    email: row.email,
+    accountType: row.account_type,
+    authUserId: row.auth_user_id,
+    email: row.email ?? '',
     fullName: row.full_name,
-    phoneNumber: row.phone_number,
+    phoneNumber: row.phone_number ?? '',
     category: row.category,
     profilePhotoUrl: row.profile_photo_url,
-    socialMediaUrls: row.social_media_urls ?? { instagram: '' },
+    socialMediaUrls: row.social_media_urls ?? {},
+    legacyDesignation: row.legacy_designation,
+    legacyRole: row.legacy_role,
     status: row.status,
     createdAt: row.created_at,
   };
@@ -54,12 +58,17 @@ export const contributorService = {
    * Creates this contributor's row -- the one and only write of Stage 1's
    * profile-completion step (no partial/draft save; every field is
    * required together, see Contributor's doc comment in types.ts).
-   * `id`/`email` come from the authenticated session, never from the
-   * form, so a contributor can't misrepresent either.
+   * `auth_user_id`/`email` come from the authenticated session, never
+   * from the form, so a contributor can't misrepresent either. `id`
+   * itself is NOT set here -- it defaults to a fresh uuid (see the
+   * merge_legacy_authors_into_contributors migration, which decoupled it
+   * from auth_user_id so legacy/no-login rows could exist too);
+   * `account_type` also defaults ('registered'), correctly, since this
+   * path only ever runs for a real signup.
    */
   async completeProfile(uid: string, email: string, input: ProfileCompletionInput): Promise<void> {
     const { error } = await supabase.from(TABLE).insert({
-      id: uid,
+      auth_user_id: uid,
       email,
       full_name: input.fullName,
       phone_number: input.phoneNumber,
@@ -70,14 +79,14 @@ export const contributorService = {
     if (error) throw error;
   },
 
-  /** The signed-in contributor's own row, or null if they haven't completed their profile yet (or aren't a contributor at all). Relies on the "reads own row" RLS policy -- never pass another user's id here expecting it to work. */
+  /** The signed-in contributor's own row (looked up by their Supabase Auth uid, NOT this table's own `id` -- see auth_user_id's doc comment in types.ts), or null if they haven't completed their profile yet (or aren't a contributor at all). Relies on the "reads own row" RLS policy -- never pass another user's uid here expecting it to work. */
   async getOwnProfile(uid: string): Promise<Contributor | null> {
     try {
-      const { data, error } = await supabase.from(TABLE).select('*').eq('id', uid).maybeSingle();
+      const { data, error } = await supabase.from(TABLE).select('*').eq('auth_user_id', uid).maybeSingle();
       if (error) throw error;
       return data ? rowToContributor(data) : null;
     } catch (error) {
-      logSupabaseError(error, OperationType.GET, `${TABLE}/${uid}`);
+      logSupabaseError(error, OperationType.GET, `${TABLE}/auth_user_id=${uid}`);
       return null;
     }
   },
@@ -112,6 +121,7 @@ export const contributorService = {
     }
   },
 
+  /** Admin-only in practice (RLS), same as getAllContributors/searchContributors. Reads email/phone_number -- never call this from public-facing code (see getPublicAuthorById below for that). */
   async getContributorById(id: string): Promise<Contributor | null> {
     try {
       const { data, error } = await supabase.from(TABLE).select('*').eq('id', id).maybeSingle();
@@ -119,6 +129,27 @@ export const contributorService = {
       return data ? rowToContributor(data) : null;
     } catch (error) {
       logSupabaseError(error, OperationType.GET, `${TABLE}/${id}`);
+      return null;
+    }
+  },
+
+  /**
+   * The ONE public-facing read in this service -- used by ArticlePage.tsx's
+   * Author Profile Card, which any anonymous site visitor can open.
+   * Queries `contributors_public` (a view exposing only safe-to-publish
+   * columns -- never email/phone_number/auth_user_id, see the
+   * add_contributors_public_view migration), not the `contributors`
+   * table directly: that table's RLS only allows a row's own owner or an
+   * admin to read it, which would silently break this card for every
+   * anonymous visitor if queried directly.
+   */
+  async getPublicAuthorById(id: string): Promise<Contributor | null> {
+    try {
+      const { data, error } = await supabase.from('contributors_public').select('*').eq('id', id).maybeSingle();
+      if (error) throw error;
+      return data ? rowToContributor(data) : null;
+    } catch (error) {
+      logSupabaseError(error, OperationType.GET, `contributors_public/${id}`);
       return null;
     }
   },

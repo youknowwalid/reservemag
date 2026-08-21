@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   LayoutDashboard, FileText, Settings, LogOut,
   ChevronRight, Shield, Layout as HomepageIcon,
-  Circle, Mail, Briefcase, Video, Layers, Users, Database,
+  Circle, Mail, Briefcase, Video, Layers, Database,
   Newspaper, Rss, UserPlus
 } from 'lucide-react';
 import { useSupabase } from '../context/SupabaseContext';
@@ -19,7 +19,12 @@ import NewsletterSection from './admin/NewsletterSection';
 import LeadSection from './admin/LeadSection';
 import VideoSection from './admin/VideoSection';
 import CategorySection from './admin/CategorySection';
-import AuthorsSection from './admin/AuthorsSection';
+// AuthorsSection (the old standalone byline registry) is intentionally
+// no longer imported/routed here -- ContributorsSection below replaced
+// it (migration: merge_legacy_authors_into_contributors). The file,
+// authorService.ts, and the `authors` DB table are all left completely
+// untouched as a rollback path -- re-adding a nav entry for it is a
+// one-line revert if ever needed.
 import BulkImportSection from './admin/BulkImportSection';
 import SpreadsheetImportSection from './admin/SpreadsheetImportSection';
 import AIConnectionTestPanel from './admin/AIConnectionTestPanel';
@@ -44,11 +49,13 @@ export default function AdminPanel() {
     { id: 'news-factory', label: 'News Factory', icon: Rss },
     { id: 'bulk-import', label: 'Bulk Import', icon: Database },
     { id: 'categories', label: 'Categories', icon: Layers },
-    { id: 'authors', label: 'Authors', icon: Users },
-    // Distinct from "Authors" above -- that's the small, manually
-    // curated byline registry; this is the self-registered "Become a
-    // Contributor" signup directory (contributors table).
-    { id: 'contributors', label: 'Contributors', icon: UserPlus },
+    // Nav-facing label is "Authors" (final name, per decision) -- it now
+    // covers both real signed-up contributors and the migrated legacy
+    // byline registry. Internal id/route/component/table names stay
+    // "contributors" (renaming those too would touch far more files for
+    // a purely cosmetic change -- see migration:
+    // merge_legacy_authors_into_contributors).
+    { id: 'contributors', label: 'Authors', icon: UserPlus },
     { id: 'videos', label: 'Video Interviews', icon: Video },
     { id: 'leads', label: 'Lead Requests', icon: Briefcase },
     { id: 'newsletter', label: 'Newsletter', icon: Mail },
@@ -84,7 +91,6 @@ export default function AdminPanel() {
         </div>
       );
       case 'categories': return <CategorySection />;
-      case 'authors': return <AuthorsSection />;
       case 'contributors': return <ContributorsSection />;
       case 'videos': return <VideoSection />;
       case 'newsletter': return <NewsletterSection />;

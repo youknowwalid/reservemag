@@ -3,9 +3,9 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { Eye, Clock, User, Share2, ArrowLeft, Bookmark } from 'lucide-react';
 import { Helmet } from 'react-helmet-async';
-import { Article, Author } from '../types';
+import { Article, Contributor } from '../types';
 import { articleService } from '../services/articleService';
-import { authorService } from '../services/authorService';
+import { contributorService } from '../services/contributorService';
 import Navbar from '../components/Navbar';
 import Footer from '../components/Footer';
 import Newsletter from '../components/Newsletter';
@@ -16,7 +16,7 @@ import AuthorProfileCard from '../components/AuthorProfileCard';
 export default function ArticlePage() {
   const { slug } = useParams<{ slug: string }>();
   const [article, setArticle] = useState<Article | null>(null);
-  const [authorData, setAuthorData] = useState<Author | null>(null);
+  const [authorData, setAuthorData] = useState<Contributor | null>(null);
   const [isAuthorCardOpen, setIsAuthorCardOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
@@ -48,8 +48,16 @@ export default function ArticlePage() {
     window.scrollTo(0, 0);
   };
 
+  // article.authorId now points into the unified `contributors` table
+  // (both real signups and the migrated legacy byline registry -- see
+  // migration: merge_legacy_authors_into_contributors), not the old
+  // standalone `authors` table. Uses getPublicAuthorById (the
+  // contributors_public view), NOT getContributorById -- this runs for
+  // any anonymous site visitor, and the raw `contributors` table's RLS
+  // would return nothing for them (it's scoped to admins/the row's own
+  // owner, since it also holds email/phone_number).
   const loadAuthor = async (id: string) => {
-    const data = await authorService.getAuthorById(id);
+    const data = await contributorService.getPublicAuthorById(id);
     setAuthorData(data);
   };
 
@@ -140,8 +148,8 @@ export default function ArticlePage() {
                         onClick={() => authorData && setIsAuthorCardOpen(true)}
                       >
                         <div className="w-12 h-12 md:w-14 md:h-14 bg-zinc-900 border border-white/10 flex items-center justify-center font-serif text-lg md:text-xl text-reserve-accent overflow-hidden">
-                          {authorData?.imageUrl ? (
-                            <img src={authorData.imageUrl} className="w-full h-full object-cover grayscale group-hover/author:grayscale-0 transition-all" alt="" referrerPolicy="no-referrer" />
+                          {authorData?.profilePhotoUrl ? (
+                            <img src={authorData.profilePhotoUrl} className="w-full h-full object-cover grayscale group-hover/author:grayscale-0 transition-all" alt="" referrerPolicy="no-referrer" />
                           ) : (
                             displayAuthor[0]
                           )}

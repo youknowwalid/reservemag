@@ -40,15 +40,21 @@ export default function ContributorDashboardPage() {
         </div>
 
         <div className="flex flex-col md:flex-row gap-8 bg-zinc-950 border border-white/5 p-8">
-          <img
-            src={contributor.profilePhotoUrl}
-            alt={contributor.fullName}
-            className="w-32 h-32 object-cover border border-white/10 shrink-0"
-          />
+          {contributor.profilePhotoUrl ? (
+            <img
+              src={contributor.profilePhotoUrl}
+              alt={contributor.fullName}
+              className="w-32 h-32 object-cover border border-white/10 shrink-0"
+            />
+          ) : (
+            <div className="w-32 h-32 bg-zinc-900 border border-white/10 shrink-0 flex items-center justify-center text-zinc-600 font-serif text-3xl uppercase">
+              {contributor.fullName.charAt(0)}
+            </div>
+          )}
           <div className="space-y-3">
             <div>
               <h2 className="text-xl font-serif">{contributor.fullName}</h2>
-              <span className="text-[10px] uppercase tracking-widest text-reserve-accent">{CATEGORY_LABELS[contributor.category] || contributor.category}</span>
+              <span className="text-[10px] uppercase tracking-widest text-reserve-accent">{CATEGORY_LABELS[contributor.category || ''] || contributor.category}</span>
             </div>
             <div className="text-xs text-zinc-500 space-y-1">
               <div>{contributor.email}</div>

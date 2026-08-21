@@ -13,9 +13,9 @@ import {
   ChevronDown,
   Upload
 } from 'lucide-react';
-import { Article, ArticleStatus, Category, Author } from '../../types';
+import { Article, ArticleStatus, Category, Contributor } from '../../types';
 import { articleService } from '../../services/articleService';
-import { authorService } from '../../services/authorService';
+import { contributorService } from '../../services/contributorService';
 import { mediaService } from '../../services/mediaService';
 import RichTextEditor from './RichTextEditor';
 
@@ -31,7 +31,11 @@ export default function StoriesSection() {
   const [searchQuery, setSearchQuery] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [categories, setCategories] = useState<string[]>([]);
-  const [authors, setAuthors] = useState<Author[]>([]);
+  // Sourced from the unified `contributors` table (real signups + the
+  // migrated legacy byline registry) -- article.authorId now points into
+  // contributors.id (uuid), not the old standalone authors.id (text). See
+  // migration: merge_legacy_authors_into_contributors.
+  const [authors, setAuthors] = useState<Contributor[]>([]);
 
   useEffect(() => {
     loadArticles();
@@ -53,8 +57,8 @@ export default function StoriesSection() {
   };
 
   const loadAuthors = async () => {
-    const data = await authorService.getAllAuthors();
-    setAuthors(data.filter(a => a.active));
+    const data = await contributorService.getAllContributors();
+    setAuthors(data.filter(c => c.status === 'active'));
   };
 
   const handleCreateNew = () => {
@@ -269,10 +273,10 @@ export default function StoriesSection() {
                   } else {
                     const selected = authors.find(a => a.id === val);
                     if (selected) {
-                      setEditingArticle({ 
-                        ...editingArticle, 
+                      setEditingArticle({
+                        ...editingArticle,
                         authorId: selected.id,
-                        author: selected.name 
+                        author: selected.fullName
                       });
                     }
                   }
@@ -281,7 +285,9 @@ export default function StoriesSection() {
               >
                 <option value="custom">-- Custom/Independent --</option>
                 {authors.map(author => (
-                  <option key={author.id} value={author.id}>{author.name}</option>
+                  <option key={author.id} value={author.id}>
+                    {author.fullName}{author.accountType === 'legacy' ? ' (legacy)' : ''}
+                  </option>
                 ))}
               </select>
             </div>

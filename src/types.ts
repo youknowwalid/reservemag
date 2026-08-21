@@ -33,30 +33,43 @@ export interface Author {
 export type ContributorCategory = 'journalist' | 'photographer' | 'videographer' | 'other';
 
 /**
- * A self-registered "Become a Contributor" account -- entirely separate
- * from `Author` above (the admin-managed byline registry used for
- * article credit) and from admin accounts (`admin_users`/is_admin()). A
- * contributor's `id` is their Supabase Auth `auth.uid()`; the row is
- * created once, on profile completion (see contributorService.ts), with
- * no partial/draft state -- Stage 1 treats profile completion as
- * all-or-nothing, so every field here is required at creation time.
+ * The single source of truth for both self-registered "Become a
+ * Contributor" accounts AND the legacy manually-curated byline registry
+ * (formerly `Author` above / the `authors` table, migrated in --
+ * migration: merge_legacy_authors_into_contributors) -- distinguished by
+ * `accountType`. Entirely separate from admin accounts
+ * (`admin_users`/is_admin()) either way.
+ *
+ * `id` is this row's own primary key (a fresh uuid) -- NOT necessarily
+ * the Supabase Auth uid. `authUserId` holds that instead, and is null
+ * for legacy rows (they predate any login system and have no
+ * auth.users account at all). A registered contributor's row is created
+ * once, on profile completion (see contributorService.ts), with no
+ * partial/draft state -- every non-legacy field is required together.
  * `status` defaults to 'active' (no vetting gate) and exists for a
- * future moderation stage that hasn't been built yet -- nothing in Stage
- * 1 reads or branches on it.
+ * future moderation stage that hasn't been built yet.
  */
 export interface Contributor {
   id: string;
+  accountType: 'legacy' | 'registered';
+  /** Supabase Auth uid, or null for a legacy row (no login exists for it). */
+  authUserId: string | null;
+  /** Empty string for legacy rows -- they were never given an email. */
   email: string;
   fullName: string;
+  /** Empty string for legacy rows. */
   phoneNumber: string;
-  category: ContributorCategory;
-  profilePhotoUrl: string;
-  /** Keyed by platform so the (not-yet-built) public author card can render the right icon per URL without a schema change. `instagram` is required at the application layer; every other key is optional. */
+  category: ContributorCategory | null;
+  profilePhotoUrl: string | null;
+  /** Keyed by platform so the public author card can render the right icon per URL without a schema change. `instagram` is required for a registered signup; every key is optional/absent for a legacy row (none had social links). */
   socialMediaUrls: {
-    instagram: string;
+    instagram?: string;
     twitter?: string;
     website?: string;
   };
+  /** Legacy-only -- the old `authors.designation`/`authors.role` text, preserved verbatim so the existing Author Profile Card renders identically to before the migration. Always null for a registered account (category serves the equivalent purpose there). */
+  legacyDesignation: string | null;
+  legacyRole: string | null;
   status: string;
   createdAt: string;
 }
