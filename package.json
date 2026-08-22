@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx --env-file-if-exists=.env server.ts",
-    "build": "tsc && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs --define:process.env.NODE_ENV='\"production\"' && esbuild social-ssr.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/social-ssr.cjs --define:process.env.NODE_ENV='\"production\"'",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs --define:process.env.NODE_ENV='\"production\"' && esbuild social-ssr.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/social-ssr.cjs --define:process.env.NODE_ENV='\"production\"'",
     "preview": "vite preview",
     "ai:health": "tsx --env-file-if-exists=.env scripts/test-ai-provider.ts",
     "test:source-retrieval": "tsx --env-file-if-exists=.env scripts/test-source-retrieval.ts",
