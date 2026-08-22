@@ -22,7 +22,7 @@ interface ContributorContextType {
   loading: boolean;
   /** Re-fetches `contributor` for the current user -- call right after completeProfile() succeeds, since Supabase Auth's own auth state doesn't change on that write (only the contributors table row does). */
   refreshContributor: () => Promise<void>;
-  /** Re-reads the Supabase session from scratch -- used by ContributorVerifyEmailPage's "I've verified -- Continue" button, for when the automatic onAuthStateChange listener below doesn't fire on its own (e.g. the confirmation link was opened in a different browser/device than this tab). */
+  /** Re-reads the Supabase session from scratch -- used by ContributorVerifyEmailPage right after a successful verifyContributorSignupOtp() call, to make sure `user`/`emailConfirmed` are up to date in this context BEFORE it navigates to /contribute/profile, rather than racing the async onAuthStateChange listener below. */
   reloadSession: () => Promise<void>;
 }
 
