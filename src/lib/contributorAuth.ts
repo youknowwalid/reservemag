@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { verifySignupOtp } from './otpVerification';
 
 // "Become a Contributor" auth helpers -- deliberately a separate file
 // from this one's admin equivalents (signInWithEmail,
@@ -16,14 +17,13 @@ import { supabase } from './supabase';
 // ProtectedRoute.
 
 /**
- * Email + password signup. Supabase's default project settings send a
- * confirmation LINK (not an OTP code) to `email` -- this is "Supabase's
- * built-in email confirmation" as-is, with no dashboard changes needed.
- * `emailRedirectTo` points at the verify-email gate (Step 2), not
- * straight at profile completion (Step 3) -- clicking the link lands the
- * browser there with a freshly-confirmed session, and
- * ContributorVerifyEmailPage is what actually moves the contributor
- * forward once `user.email_confirmed_at` is set.
+ * Email + password signup. The "Confirm signup" email template (Supabase
+ * dashboard) has been customized to include `{{ .Token }}` -- Supabase's
+ * built-in 6-digit OTP code -- rather than relying on the default
+ * confirmation link. `emailRedirectTo` is still set (it's a required
+ * option, and covers the case where the template also renders a link),
+ * but the actual verification path is ContributorVerifyEmailPage's code
+ * input calling verifyContributorSignupOtp() below, not a link click.
  *
  * Whether an active (but unconfirmed) session is issued immediately
  * after this call, before the link is even clicked, depends on this
@@ -42,7 +42,7 @@ export async function signUpContributor(email: string, password: string): Promis
   if (error) throw error;
 }
 
-/** Re-sends the signup confirmation link -- for ContributorVerifyEmailPage's "Resend" action, when the first email didn't arrive or expired. Works off the plain email string, no active session required (matters for the case where signUp() didn't issue one). */
+/** Re-sends the signup confirmation email (now a 6-digit code -- see verifyContributorSignupOtp below) -- for ContributorVerifyEmailPage's "Resend" action, when the first email didn't arrive or expired. `type: 'signup'` re-triggers the SAME "Confirm signup" template as signUp() itself, so it carries the same `{{ .Token }}` code; no dashboard changes were needed to make resend produce a fresh code too. Works off the plain email string, no active session required (matters for the case where signUp() didn't issue one). */
 export async function resendConfirmationEmail(email: string): Promise<void> {
   const { error } = await supabase.auth.resend({
     type: 'signup',
@@ -50,6 +50,27 @@ export async function resendConfirmationEmail(email: string): Promise<void> {
     options: { emailRedirectTo: `${window.location.origin}/contribute/verify-email` },
   });
   if (error) throw error;
+}
+
+/**
+ * Verifies the 6-digit code the user typed into ContributorVerifyEmailPage
+ * against Supabase Auth, confirming the account signUpContributor() just
+ * created. On success, Supabase Auth sets a confirmed session for `email`
+ * as a side effect of this call; the caller is responsible for syncing
+ * ContributorContext (e.g. via its `reloadSession`) before navigating
+ * onward, since the context's own onAuthStateChange listener updates
+ * asynchronously and isn't guaranteed to have run yet by the time this
+ * promise resolves.
+ *
+ * Thin wrapper around otpVerification.ts's verifySignupOtp -- that's
+ * where the actual `type: 'signup'` logic lives (and where it's tested,
+ * per scripts/test-contributor-otp-verify.ts), kept in a file with no
+ * import of ./supabase so it's testable outside a Vite runtime. This
+ * wrapper is the only place that supplies the real
+ * `supabase.auth.verifyOtp`.
+ */
+export async function verifyContributorSignupOtp(email: string, token: string): Promise<void> {
+  return verifySignupOtp(supabase.auth.verifyOtp.bind(supabase.auth), email, token);
 }
 
 /** Returning-contributor sign-in (email + password they set at signup). */
