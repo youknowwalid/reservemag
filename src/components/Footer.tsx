@@ -2,6 +2,15 @@ import { Instagram, Facebook, ArrowUp } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSupabase } from '../context/SupabaseContext';
 
+// Fixed routes for the Registry Index labels that aren't admin-
+// configurable via siteSettings.footerUrls -- only used when that
+// setting doesn't already override the label.
+const FOOTER_LABEL_FALLBACK_URLS: Record<string, string> = {
+  'Become a Contributor': '/contribute',
+  'Privacy Policy': '/privacy-policy',
+  'Terms of Service': '/terms-of-service',
+};
+
 export default function Footer() {
   const { siteSettings } = useSupabase();
   const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -44,13 +53,16 @@ export default function Footer() {
             <div className="grid grid-cols-2 gap-x-8 gap-y-4">
               {[
                 'Navigation', 'Digital Archive', 'Editorial Policy',
-                'Editorial Board', 'Advertising', 'Legal', 'Become a Contributor'
+                'Editorial Board', 'Advertising', 'Legal', 'Become a Contributor',
+                'Privacy Policy', 'Terms of Service'
               ].map((label) => {
                 // Every other label here falls back to '/' when unset in
-                // siteSettings -- this one falls back to /contribute
-                // specifically, same pattern as the Navbar CTA's own
-                // ctaButton.url fallback to /get-featured.
-                const url = siteSettings?.footerUrls?.[label] || (label === 'Become a Contributor' ? '/contribute' : '/');
+                // siteSettings -- these fall back to their own fixed
+                // routes instead, same pattern as the Navbar CTA's own
+                // ctaButton.url fallback to /get-featured. Footer-only,
+                // per the brief -- neither is linked from the navbar,
+                // homepage, or anywhere else.
+                const url = siteSettings?.footerUrls?.[label] || FOOTER_LABEL_FALLBACK_URLS[label] || '/';
                 const isInternal = url.startsWith('/');
                 
                 return (
