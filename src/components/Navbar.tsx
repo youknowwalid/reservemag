@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Menu, X, Search, ChevronRight } from 'lucide-react';
@@ -30,12 +30,37 @@ export default function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [menuItems, setMenuItems] = useState<string[]>(FALLBACK_CATEGORIES);
+  const navRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 50);
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
+
+  // Publishes the nav's real rendered height as a CSS custom property so
+  // sections directly under it (Hero.tsx in particular) can reserve exact
+  // clearance instead of guessing a fixed pixel value -- the nav's height
+  // isn't constant: it shrinks between the scrolled/unscrolled states
+  // (py-8 vs py-4) and its content wraps differently across breakpoints.
+  // A stale value is harmless (Hero.tsx falls back to a sensible default
+  // until the first measurement lands), so this doesn't need to be
+  // perfectly synchronous with paint.
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const publishHeight = () => {
+      document.documentElement.style.setProperty('--header-height', `${nav.offsetHeight}px`);
+    };
+    publishHeight();
+    const resizeObserver = new ResizeObserver(publishHeight);
+    resizeObserver.observe(nav);
+    window.addEventListener('resize', publishHeight);
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', publishHeight);
+    };
+  }, [isScrolled]);
 
   // Pulls from the same DB-backed category list the admin panel and homepage
   // use, instead of a separate hardcoded array that could drift out of sync.
@@ -48,7 +73,8 @@ export default function Navbar() {
 
   return (
     <>
-      <nav 
+      <nav
+        ref={navRef}
         className={`fixed top-0 left-0 w-full z-50 transition-all duration-500 ${
           isScrolled ? 'glass-nav py-4' : 'bg-transparent py-8'
         }`}

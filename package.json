@@ -17,6 +17,7 @@
     "test:contributor-sign-out": "tsx scripts/test-contributor-sign-out.ts",
     "test:editorial-board": "tsx scripts/test-editorial-board.ts",
     "test:server-routing": "tsx --env-file-if-exists=.env scripts/test-server-routing.ts",
+    "test:hero-clearance": "tsx scripts/test-hero-header-clearance.ts",
     "test:contributor-otp-verify": "tsx scripts/test-contributor-otp-verify.ts",
     "test:profile-completion": "tsx scripts/test-profile-completion.ts",
     "test:contributor-admin-actions": "tsx scripts/test-contributor-admin-actions.ts",

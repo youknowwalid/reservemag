@@ -1,6 +1,15 @@
 @import "tailwindcss";
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,500&display=swap');
 
+/* Fires on short viewports regardless of width -- e.g. a phone in
+   landscape (~375-430px tall). Layout that only ever branches on `md:`
+   etc. (width-only) has no way to know it's short on vertical room; this
+   variant is how Hero.tsx keeps its headline from colliding with the
+   fixed Navbar when the desktop nav layout kicks in at 768px+ width but
+   the viewport is far shorter than a desktop screen. 480px sits above
+   every landscape phone height and below tablet/laptop landscape. */
+@custom-variant short (@media (max-height: 480px));
+
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-serif: "Playfair Display", serif;

@@ -13,8 +13,8 @@ export default function Hero({ article }: HeroProps) {
   
   return (
     <Link to={`/${slug}`} className="block">
-      <section 
-        className="relative h-[90vh] md:h-screen w-full overflow-hidden bg-reserve-bg cursor-pointer"
+      <section
+        className="relative min-h-[90vh] md:min-h-screen w-full overflow-hidden bg-reserve-bg cursor-pointer flex flex-col justify-end"
       >
       <motion.div 
         initial={{ scale: 1.1, opacity: 0 }}
@@ -39,21 +39,21 @@ export default function Hero({ article }: HeroProps) {
         )}
       </motion.div>
 
-      <div className="relative z-10 container mx-auto px-6 h-full flex flex-col justify-end pb-24 md:pb-32">
+      <div className="relative z-10 container mx-auto px-6 pt-[var(--header-height,6rem)] pb-24 md:pb-32 short:pb-10">
         <motion.div
           initial={{ y: 50, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ delay: 0.5, duration: 0.8 }}
           className="max-w-4xl"
         >
-          <div className="flex items-center gap-4 mb-6">
+          <div className="flex items-center gap-4 mb-6 short:mb-3">
             <span className="text-[11px] uppercase tracking-[0.3em] font-semibold py-1 px-3 border border-reserve-accent text-reserve-accent">
               Exclusive {article.category}
             </span>
             <span className="text-[11px] text-reserve-gray uppercase tracking-widest">{article.date}</span>
           </div>
 
-          <h2 className="text-5xl md:text-8xl lg:text-9xl font-bold leading-[0.9] tracking-tighter mb-8 text-reserve-text text-balance">
+          <h2 className="text-5xl md:text-8xl lg:text-9xl short:text-3xl short:md:text-4xl short:lg:text-5xl font-bold leading-[0.9] tracking-tighter mb-8 short:mb-3 text-reserve-text text-balance">
             {article.title}
           </h2>
 
