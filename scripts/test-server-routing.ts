@@ -40,7 +40,8 @@ if (!fs.existsSync(distIndexPath)) {
 }
 
 const { createApp } = await import('../server');
-const { getPublishedArticleSlugsServer } = await import('../server-supabase');
+const { getPublishedArticleSlugsServer, getAllCategoryNamesServer } = await import('../server-supabase');
+const { slugify } = await import('../src/lib/slug');
 
 let passed = 0;
 let failed = 0;
@@ -58,7 +59,9 @@ function assert(condition: boolean, label: string, detail?: unknown) {
 // Every static page the fix in server.ts (KNOWN_STATIC_SLUGS) now
 // recognizes -- mirrors src/App.tsx's <Route> list minus "/" and "/:slug"
 // (already covered elsewhere) and minus /admin (already bypassed before
-// this fix existed).
+// this fix existed). /archive (audit NAV-04's destination) joined this
+// list in the follow-up fix -- it's now a real route, not a genuinely
+// unknown one, so it moved out of GENUINELY_UNKNOWN_ROUTES below.
 const STATIC_ROUTES_MUST_BE_200 = [
   '/privacy-policy',
   '/terms-of-service',
@@ -68,12 +71,10 @@ const STATIC_ROUTES_MUST_BE_200 = [
   '/editorial-board',
   '/contribute',
   '/get-featured',
+  '/archive',
 ];
 
-// /archive is deliberately NOT in KNOWN_STATIC_SLUGS -- it isn't
-// registered in src/App.tsx's router either (App.tsx's catch-all
-// redirects it client-side to "/"), so it must keep 404ing server-side.
-const GENUINELY_UNKNOWN_ROUTES = ['/archive', '/this-does-not-exist-xyz123'];
+const GENUINELY_UNKNOWN_ROUTES = ['/this-does-not-exist-xyz123', '/category/not-a-real-category-xyz'];
 
 async function main() {
   const app = await createApp();
@@ -102,6 +103,20 @@ async function main() {
       assert(res.status === 404, `${route} still returns HTTP 404`, res.status);
     }
 
+    console.log('\n=== /category/:categorySlug (audit NAV-01\'s destination) is 200 for a real category, 404 for a fake one ===');
+    const categoryNames = await getAllCategoryNamesServer();
+    if (categoryNames.length === 0) {
+      console.log('  SKIP -- no reachable Supabase project / no categories; cannot verify category-route SSR from this environment.');
+    } else {
+      const realName = categoryNames[0];
+      const realSlug = slugify(realName);
+      const res = await fetch(`${baseUrl}/category/${realSlug}`);
+      assert(res.status === 200, `/category/${realSlug} (real category) returns HTTP 200`, res.status);
+      const body = await res.text();
+      assert(!/Page Not Found/i.test(body), `/category/${realSlug} response body is not the "Page Not Found" template`, body.slice(0, 120));
+      assert(body.includes(`<title>${realName} | THE RESERVE</title>`), `/category/${realSlug} renders the real category name in <title>, not the generic default`, body.match(/<title>[^<]*<\/title>/)?.[0]);
+    }
+
     console.log('\n=== Article-slug SSR is unaffected by the fix ===');
     const slugs = await getPublishedArticleSlugsServer();
     if (slugs.length === 0) {
@@ -120,6 +135,12 @@ async function main() {
     const sitemapBody = await sitemapRes.text();
     for (const route of STATIC_ROUTES_MUST_BE_200) {
       assert(sitemapBody.includes(`<loc>`) && sitemapBody.includes(route), `sitemap.xml includes ${route}`);
+    }
+    if (categoryNames.length > 0) {
+      for (const name of categoryNames) {
+        const route = `/category/${slugify(name)}`;
+        assert(sitemapBody.includes(route), `sitemap.xml includes ${route}`);
+      }
     }
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));

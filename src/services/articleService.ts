@@ -96,6 +96,35 @@ export const articleService = {
     }
   },
 
+  // Offset-based page fetch for CategoryPage/ArchivePage's "Load More"
+  // button -- getPublishedArticles() above always starts at the top and
+  // has no way to ask for "the next batch", which is exactly what a
+  // load-more control needs. Callers detect the end of the list by
+  // `batch.length < limit` rather than a separate COUNT query -- one
+  // fewer request per page, and this table has no existing precedent for
+  // needing an exact total. Same sort convention as getPublishedArticles
+  // (most-recently-updated first).
+  async getPublishedArticlesPage({
+    category,
+    offset,
+    limit,
+  }: {
+    category?: string;
+    offset: number;
+    limit: number;
+  }): Promise<Article[]> {
+    try {
+      let q = supabase.from(TABLE).select('*').eq('status', 'published');
+      if (category) q = q.eq('category', category);
+      const { data, error } = await q.order('updated_at', { ascending: false }).range(offset, offset + limit - 1);
+      if (error) throw error;
+      return (data ?? []).map(rowToArticle);
+    } catch (error) {
+      logSupabaseError(error, OperationType.LIST, TABLE);
+      return [];
+    }
+  },
+
   async getArticlesByIds(ids: string[]): Promise<Article[]> {
     if (!ids || ids.length === 0) return [];
     try {
