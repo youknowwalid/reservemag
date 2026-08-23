@@ -15,7 +15,7 @@ import { resolveSignupPageRedirect } from '../../lib/contributorRouting';
 // NOT decide by itself whether the contributor is verified.
 
 export default function ContributorSignupPage() {
-  const { user, contributor, emailConfirmed, loading } = useContributor();
+  const { user, contributor, emailConfirmed, isRemoved, loading } = useContributor();
   const navigate = useNavigate();
   const [mode, setMode] = useState<'signup' | 'signin'>('signup');
   const [email, setEmail] = useState('');
@@ -24,7 +24,7 @@ export default function ContributorSignupPage() {
   const [error, setError] = useState<string | null>(null);
 
   if (!loading) {
-    const redirect = resolveSignupPageRedirect({ hasUser: Boolean(user), emailConfirmed, hasContributor: Boolean(contributor) });
+    const redirect = resolveSignupPageRedirect({ hasUser: Boolean(user), emailConfirmed, hasContributor: Boolean(contributor), isRemoved });
     if (redirect) return <Navigate to={redirect} replace />;
   }
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Instagram, Link as LinkIcon, Twitter, BarChart3, Plus } from 'lucide-react';
+import { Instagram, Link as LinkIcon, Twitter, Facebook, Linkedin, BarChart3, Plus } from 'lucide-react';
 import Navbar from '../../components/Navbar';
 import Footer from '../../components/Footer';
 import { useContributor } from '../../context/ContributorContext';
@@ -109,6 +109,16 @@ export default function ContributorDashboardPage() {
               {contributor.socialMediaUrls.instagram && (
                 <a href={contributor.socialMediaUrls.instagram} target="_blank" rel="noreferrer" className="text-zinc-500 hover:text-white transition-colors">
                   <Instagram size={16} />
+                </a>
+              )}
+              {contributor.socialMediaUrls.facebook && (
+                <a href={contributor.socialMediaUrls.facebook} target="_blank" rel="noreferrer" className="text-zinc-500 hover:text-white transition-colors">
+                  <Facebook size={16} />
+                </a>
+              )}
+              {contributor.socialMediaUrls.linkedin && (
+                <a href={contributor.socialMediaUrls.linkedin} target="_blank" rel="noreferrer" className="text-zinc-500 hover:text-white transition-colors">
+                  <Linkedin size={16} />
                 </a>
               )}
               {contributor.socialMediaUrls.twitter && (

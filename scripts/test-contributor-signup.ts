@@ -170,7 +170,7 @@ function testConstantsAreSane() {
 // ---------------------------------------------------------------------------
 
 function state(overrides: Partial<ContributorAuthState>): ContributorAuthState {
-  return { hasUser: false, emailConfirmed: false, hasContributor: false, ...overrides };
+  return { hasUser: false, emailConfirmed: false, hasContributor: false, isRemoved: false, ...overrides };
 }
 
 function testProfilePageBlocksUnverifiedAccount() {
@@ -223,6 +223,40 @@ function testDashboardGuardRedirect() {
   assert(resolveDashboardGuardRedirect(state({ hasUser: true, hasContributor: true })) === null, 'session + completed profile -> null (render the dashboard)');
 }
 
+// ---------------------------------------------------------------------------
+// isRemoved -- the admin "Delete User" tombstone gate. Added alongside
+// the app-level access lock (expand_contributor_profile_and_removal_lock
+// migration): every one of the four gates must send a removed
+// contributor to '/contribute/removed' BEFORE any other check, the same
+// way an unconfirmed account is bounced to the verification gate before
+// ever reaching the profile form -- see contributorRouting.ts's header
+// comment.
+// ---------------------------------------------------------------------------
+
+function testRemovedContributorNeverReachesAnyOtherGate() {
+  console.log('\n=== isRemoved: every gate sends a removed contributor to /contribute/removed, ahead of every other check ===');
+
+  const removedButOtherwiseFullyValid = state({ hasUser: true, emailConfirmed: true, hasContributor: true, isRemoved: true });
+
+  assert(resolveSignupPageRedirect(removedButOtherwiseFullyValid) === '/contribute/removed', 'Step 1 (signup page): removed -> /contribute/removed, not the dashboard it would otherwise reach', resolveSignupPageRedirect(removedButOtherwiseFullyValid));
+  assert(resolveVerifyEmailPageRedirect(removedButOtherwiseFullyValid, false) === '/contribute/removed', 'Step 2 (verify-email page): removed -> /contribute/removed', resolveVerifyEmailPageRedirect(removedButOtherwiseFullyValid, false));
+  assert(resolveProfilePageRedirect(removedButOtherwiseFullyValid) === '/contribute/removed', 'Step 3 (profile page): removed -> /contribute/removed, not the dashboard', resolveProfilePageRedirect(removedButOtherwiseFullyValid));
+  assert(resolveDashboardGuardRedirect(removedButOtherwiseFullyValid) === '/contribute/removed', 'Step 4 (dashboard guard): removed -> /contribute/removed, never renders the dashboard', resolveDashboardGuardRedirect(removedButOtherwiseFullyValid));
+
+  // The edge case that matters most: removed AND unconfirmed at the same
+  // time (shouldn't normally happen, but the gate must not let an
+  // unlucky state combination land somewhere wrong) -- isRemoved must
+  // still win over the emailConfirmed check.
+  const removedAndUnconfirmed = state({ hasUser: true, emailConfirmed: false, hasContributor: true, isRemoved: true });
+  assert(resolveProfilePageRedirect(removedAndUnconfirmed) === '/contribute/removed', 'removed wins over "unconfirmed" too -- never sent to the verification gate instead', resolveProfilePageRedirect(removedAndUnconfirmed));
+}
+
+function testNonRemovedContributorIsUnaffected() {
+  console.log('\n=== isRemoved: false (the default/normal case) changes nothing about the existing gates ===');
+  assert(resolveDashboardGuardRedirect(state({ hasUser: true, hasContributor: true, isRemoved: false })) === null, 'a normal, active contributor still reaches the dashboard', resolveDashboardGuardRedirect(state({ hasUser: true, hasContributor: true, isRemoved: false })));
+  assert(resolveProfilePageRedirect(state({ hasUser: true, emailConfirmed: true, hasContributor: false, isRemoved: false })) === null, 'a normal, active, unverified-turned-verified contributor still reaches the profile form', undefined);
+}
+
 async function main() {
   testFileTypeAccepted();
   testFileTypeRejected();
@@ -241,6 +275,8 @@ async function main() {
   testSignupPageRedirect();
   testVerifyEmailPageRedirect();
   testDashboardGuardRedirect();
+  testRemovedContributorNeverReachesAnyOtherGate();
+  testNonRemovedContributorIsUnaffected();
 
   console.log(`\n=== SUMMARY === ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

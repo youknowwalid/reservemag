@@ -19,6 +19,8 @@ interface ContributorContextType {
   emailConfirmed: boolean;
   /** null until profile completion has happened -- see contributorService.completeProfile(). A non-null `user` with a null `contributor` means "signed up, profile not yet completed" (Step 3 gate -- Step 2, email verification, comes first). */
   contributor: Contributor | null;
+  /** Derived from contributor?.status === 'removed' -- the admin "Delete User" tombstone (contributorService.removeContributor()). Every contributorRouting.ts gate checks this and redirects to '/contribute/removed' before any other check, exactly the way `emailConfirmed` gates everything past Step 1. */
+  isRemoved: boolean;
   loading: boolean;
   /** Re-fetches `contributor` for the current user -- call right after completeProfile() succeeds, since Supabase Auth's own auth state doesn't change on that write (only the contributors table row does). */
   refreshContributor: () => Promise<void>;
@@ -30,6 +32,7 @@ const ContributorContext = createContext<ContributorContextType>({
   user: null,
   emailConfirmed: false,
   contributor: null,
+  isRemoved: false,
   loading: true,
   refreshContributor: async () => {},
   reloadSession: async () => {},
@@ -78,9 +81,10 @@ export const ContributorProvider: React.FC<{ children: React.ReactNode }> = ({ c
   }, [loadContributor]);
 
   const emailConfirmed = Boolean(user?.email_confirmed_at);
+  const isRemoved = contributor?.status === 'removed';
 
   return (
-    <ContributorContext.Provider value={{ user, emailConfirmed, contributor, loading, refreshContributor, reloadSession }}>
+    <ContributorContext.Provider value={{ user, emailConfirmed, contributor, isRemoved, loading, refreshContributor, reloadSession }}>
       {children}
     </ContributorContext.Provider>
   );

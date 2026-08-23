@@ -19,6 +19,7 @@ import TermsOfServicePage from './pages/legal/TermsOfServicePage';
 import ContributorSignupPage from './pages/contribute/ContributorSignupPage';
 import ContributorVerifyEmailPage from './pages/contribute/ContributorVerifyEmailPage';
 import ContributorProfilePage from './pages/contribute/ContributorProfilePage';
+import ContributorRemovedPage from './pages/contribute/ContributorRemovedPage';
 import ContributorDashboardPage from './pages/contribute/ContributorDashboardPage';
 import ContributorProtectedRoute from './components/contribute/ContributorProtectedRoute';
 import { Article, Category, HomepageConfig } from './types';
@@ -223,6 +224,7 @@ export default function App() {
             <Route path="/contribute" element={<ContributorSignupPage />} />
             <Route path="/contribute/verify-email" element={<ContributorVerifyEmailPage />} />
             <Route path="/contribute/profile" element={<ContributorProfilePage />} />
+            <Route path="/contribute/removed" element={<ContributorRemovedPage />} />
             <Route
               path="/contribute/dashboard"
               element={

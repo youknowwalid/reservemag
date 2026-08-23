@@ -10,7 +10,7 @@ import { resolveDashboardGuardRedirect } from '../../lib/contributorRouting';
 // correctly redirected to sign up like anyone else, and a contributor
 // session can never satisfy this by any admin-side property.
 export default function ContributorProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, contributor, emailConfirmed, loading } = useContributor();
+  const { user, contributor, emailConfirmed, isRemoved, loading } = useContributor();
 
   if (loading) {
     return (
@@ -20,7 +20,7 @@ export default function ContributorProtectedRoute({ children }: { children: Reac
     );
   }
 
-  const redirect = resolveDashboardGuardRedirect({ hasUser: Boolean(user), emailConfirmed, hasContributor: Boolean(contributor) });
+  const redirect = resolveDashboardGuardRedirect({ hasUser: Boolean(user), emailConfirmed, hasContributor: Boolean(contributor), isRemoved });
   if (redirect) return <Navigate to={redirect} replace />;
 
   return <>{children}</>;
