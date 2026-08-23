@@ -88,3 +88,26 @@ export function resolveDashboardGuardRedirect(state: ContributorAuthState): Cont
   if (!state.hasContributor) return '/contribute/profile';
   return null; // render the dashboard
 }
+
+/**
+ * Site-wide header gate (Navbar.tsx) for the "Become a Contributor" CTA
+ * -- hidden for an already-onboarded contributor, who sees the account
+ * menu (name/avatar, Edit Profile, Sign Out) instead, since they don't
+ * need to be invited to become something they already are. Shown for
+ * everyone else: an anonymous visitor, AND a signed-in visitor who
+ * hasn't finished onboarding yet (unverified email, or verified with no
+ * completed profile) -- that visitor still legitimately needs this CTA
+ * (or, in practice, clicking it just routes them onward via
+ * resolveSignupPageRedirect above to wherever they actually belong).
+ *
+ * `hasContributor` -- never `hasUser` -- is the single source of truth
+ * for "is this visitor already a contributor?" here, exactly as
+ * ContributorDashboardPage itself gates rendering on `contributor`, not
+ * on `user`. That distinction is what the header bug this fixed actually
+ * was: the header rendered this CTA unconditionally, with no auth-state
+ * check of any kind, so an authenticated contributor saw an invitation
+ * to become the thing they already were.
+ */
+export function shouldShowBecomeContributorCta(hasContributor: boolean): boolean {
+  return !hasContributor;
+}

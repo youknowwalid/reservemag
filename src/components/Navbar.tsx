@@ -1,10 +1,14 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Menu, X, Search, ChevronRight } from 'lucide-react';
 import { useSupabase } from '../context/SupabaseContext';
+import { useContributor } from '../context/ContributorContext';
 import { categoryService } from '../services/categoryService';
+import { logout } from '../lib/supabase';
+import { shouldShowBecomeContributorCta } from '../lib/contributorRouting';
 import SearchOverlay from './SearchOverlay';
+import ContributorAccountMenu from './contribute/ContributorAccountMenu';
 
 // Last-resort fallback if the categories table is ever emptied (e.g. a
 // fresh/un-seeded database) so the menu never silently renders with
@@ -13,6 +17,15 @@ const FALLBACK_CATEGORIES = ['Fashion', 'Business', 'Sports', 'Cinema', 'Culture
 
 export default function Navbar() {
   const { siteSettings } = useSupabase();
+  // `contributor` (not just a Supabase Auth session existing) is the
+  // real "is this visitor already a contributor?" signal -- same one
+  // ContributorDashboardPage itself gates on. It's null for a signed-out
+  // visitor AND for a signed-in visitor mid-signup (unverified email, or
+  // verified but profile not completed yet) -- both of whom still
+  // legitimately need to see "Become a Contributor".
+  const { contributor, reloadSession } = useContributor();
+  const showBecomeContributorCta = shouldShowBecomeContributorCta(Boolean(contributor));
+  const navigate = useNavigate();
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -66,12 +79,18 @@ export default function Navbar() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 md:gap-6 flex-shrink-0 ml-4">
-            <Link
-              to="/contribute"
-              className="hidden sm:flex items-center gap-2 px-3 sm:px-4 md:px-6 py-2 border border-reserve-border rounded-full text-[9px] sm:text-[10px] md:text-[11px] uppercase tracking-widest whitespace-nowrap hover:bg-reserve-text hover:text-reserve-bg transition-all duration-300 flex-shrink-0"
-            >
-              Become a Contributor
-            </Link>
+            {showBecomeContributorCta ? (
+              <Link
+                to="/contribute"
+                className="hidden sm:flex items-center gap-2 px-3 sm:px-4 md:px-6 py-2 border border-reserve-border rounded-full text-[9px] sm:text-[10px] md:text-[11px] uppercase tracking-widest whitespace-nowrap hover:bg-reserve-text hover:text-reserve-bg transition-all duration-300 flex-shrink-0"
+              >
+                Become a Contributor
+              </Link>
+            ) : (
+              <div className="hidden sm:block">
+                <ContributorAccountMenu />
+              </div>
+            )}
             <Link
               to={siteSettings?.ctaButton.url || '/get-featured'}
               className="flex items-center gap-2 px-3 sm:px-4 md:px-6 py-2 border border-reserve-border rounded-full text-[9px] sm:text-[10px] md:text-[11px] uppercase tracking-widest whitespace-nowrap hover:bg-reserve-text hover:text-reserve-bg transition-all duration-300 flex-shrink-0"
@@ -133,8 +152,21 @@ export default function Navbar() {
                   <a href={siteSettings?.socialUrls?.instagram || '#'} target="_blank" rel="noreferrer" className="text-xs hover:text-reserve-accent transition-colors">Instagram</a>
                   <a href={siteSettings?.socialUrls?.facebook || '#'} target="_blank" rel="noreferrer" className="text-xs hover:text-reserve-accent transition-colors">Facebook</a>
                   <Link to="/archive" className="text-xs hover:text-reserve-accent transition-colors">Archive</Link>
-                  {/* Reachable here on small screens, where the navbar's own "Become a Contributor" pill is hidden (sm:flex) for space. */}
-                  <Link to="/contribute" className="text-xs hover:text-reserve-accent transition-colors" onClick={() => setIsMenuOpen(false)}>Become a Contributor</Link>
+                  {showBecomeContributorCta ? (
+                    // Reachable here on small screens, where the navbar's own "Become a Contributor" pill is hidden (sm:flex) for space.
+                    <Link to="/contribute" className="text-xs hover:text-reserve-accent transition-colors" onClick={() => setIsMenuOpen(false)}>Become a Contributor</Link>
+                  ) : (
+                    <>
+                      {/* Mirrors the header's ContributorAccountMenu, whose own trigger is hidden below the sm breakpoint -- same reachability reasoning as "Become a Contributor" above for a logged-out visitor. */}
+                      <Link to="/contribute/dashboard" className="text-xs hover:text-reserve-accent transition-colors" onClick={() => setIsMenuOpen(false)}>Dashboard</Link>
+                      <button
+                        onClick={async () => { setIsMenuOpen(false); await logout(); await reloadSession(); navigate('/'); }}
+                        className="text-xs hover:text-reserve-accent transition-colors"
+                      >
+                        Sign Out
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
