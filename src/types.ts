@@ -283,3 +283,26 @@ export interface VideoInterview {
   featured: boolean;
   createdAt: any;
 }
+
+/**
+ * Admin-managed entry on the public /editorial-board page (migration:
+ * add_editorial_board_members -- see
+ * supabase/migrations/0001_add_editorial_board_members.sql). Unlike the
+ * Privacy Policy/Terms of Service/Editorial Policy/Advertising/Legal
+ * pages, which are static verbatim text, the board membership itself
+ * changes over time, so it lives in its own table rather than being
+ * hardcoded into the page. `displayOrder` is the admin-controlled
+ * publication order (ascending) -- see lib/editorialBoardView.ts for the
+ * pure sort/reorder logic both the public page and the admin CRUD
+ * section share.
+ */
+export interface EditorialBoardMember {
+  id: string;
+  name: string;
+  title: string;
+  /** Short bio -- may be empty, but never null; the public page renders it conditionally either way. */
+  bio: string;
+  photoUrl: string | null;
+  displayOrder: number;
+  createdAt?: string;
+}

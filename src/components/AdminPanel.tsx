@@ -4,7 +4,7 @@ import {
   LayoutDashboard, FileText, Settings, LogOut,
   ChevronRight, Shield, Layout as HomepageIcon,
   Circle, Mail, Briefcase, Video, Layers, Database,
-  Newspaper, Rss, UserPlus, Inbox
+  Newspaper, Rss, UserPlus, Inbox, Users
 } from 'lucide-react';
 import { useSupabase } from '../context/SupabaseContext';
 import { logout } from '../lib/supabase';
@@ -32,6 +32,7 @@ import SourceRetrievalTestPanel from './admin/SourceRetrievalTestPanel';
 import EditorialGenerationPanel from './admin/EditorialGenerationPanel';
 import ContributorsSection from './admin/ContributorsSection';
 import SubmissionsSection from './admin/SubmissionsSection';
+import EditorialBoardSection from './admin/EditorialBoardSection';
 
 export default function AdminPanel() {
   const { user } = useSupabase();
@@ -57,6 +58,10 @@ export default function AdminPanel() {
     // a purely cosmetic change -- see migration:
     // merge_legacy_authors_into_contributors).
     { id: 'contributors', label: 'Authors', icon: UserPlus },
+    // The site's editorial masthead (/editorial-board) -- deliberately
+    // separate from "Authors" above, which is the contributor/byline
+    // registry, not the board.
+    { id: 'editorial-board', label: 'Editorial Board', icon: Users },
     // A review queue (what's submitted), not a people directory (who the
     // people are) -- deliberately separate from "Authors" above.
     { id: 'submissions', label: 'Submissions', icon: Inbox },
@@ -96,6 +101,7 @@ export default function AdminPanel() {
       );
       case 'categories': return <CategorySection />;
       case 'contributors': return <ContributorsSection />;
+      case 'editorial-board': return <EditorialBoardSection />;
       case 'submissions': return <SubmissionsSection />;
       case 'videos': return <VideoSection />;
       case 'newsletter': return <NewsletterSection />;

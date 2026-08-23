@@ -9,6 +9,10 @@ const FOOTER_LABEL_FALLBACK_URLS: Record<string, string> = {
   'Become a Contributor': '/contribute',
   'Privacy Policy': '/privacy-policy',
   'Terms of Service': '/terms-of-service',
+  'Editorial Policy': '/editorial-policy',
+  'Editorial Board': '/editorial-board',
+  'Advertising': '/advertising',
+  'Legal': '/legal',
 };
 
 export default function Footer() {
@@ -48,7 +52,7 @@ export default function Footer() {
             </div>
           </div>
 
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-1">
             <span className="text-[10px] uppercase tracking-widest text-reserve-gray block mb-8 font-bold">Registry Index</span>
             <div className="grid grid-cols-2 gap-x-8 gap-y-4">
               {[
@@ -87,6 +91,22 @@ export default function Footer() {
                   </div>
                 );
               })}
+            </div>
+          </div>
+
+          <div className="lg:col-span-1">
+            <span className="text-[10px] uppercase tracking-widest text-reserve-gray block mb-8 font-bold">Contact</span>
+            <div className="space-y-4">
+              <p className="text-sm text-reserve-text font-medium">The Reserve Media Co.</p>
+              <a href="tel:+17829071034" className="block text-sm text-reserve-gray hover:text-reserve-accent transition-colors">
+                +1 (782) 907-1034
+              </a>
+              <a href="mailto:contact@thereservemag.com" className="block text-sm text-reserve-gray hover:text-reserve-accent transition-colors">
+                contact@thereservemag.com
+              </a>
+              <p className="text-sm text-reserve-gray font-light leading-relaxed max-w-[220px]">
+                152 St. George Street, Annapolis Royal, Nova Scotia (NS), B0S 1A0, Canada.
+              </p>
             </div>
           </div>
         </div>

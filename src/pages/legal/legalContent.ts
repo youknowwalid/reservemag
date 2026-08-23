@@ -16,6 +16,26 @@
 //     -- lists, --- rules) as supplied -- rendered via react-markdown so
 //     that syntax renders as intended instead of appearing as literal
 //     '#'/'**' characters on the page.
+//
+// EDITORIAL_POLICY_MARKDOWN, ADVERTISING_MARKDOWN, LEGAL_MARKDOWN, and
+// EDITORIAL_BOARD_INTRO_MARKDOWN (added for the four new footer pages)
+// are the same kind of genuine CommonMark as TERMS_OF_SERVICE_MARKDOWN,
+// inserted verbatim under the same no-edit rule, and rendered via
+// react-markdown for the same reason -- see
+// src/components/legal/legalMarkdownComponents.tsx for the shared
+// typography mapping those four pages use (a copy of
+// TermsOfServicePage.tsx's own `markdownComponents`, kept separate so
+// this stage didn't touch that already-shipped page).
+//
+// EDITORIAL_BOARD_INTRO_MARKDOWN is deliberately only the STATIC
+// intro/philosophy portion of the supplied Editorial Board content --
+// it stops after "Our Philosophy" and does not include the "Board
+// Members" section or its bracketed `[NAME]/[TITLE/ROLE]/[bio]`
+// placeholder entries, which were explicit instructions to replace with
+// a real, dynamic, admin-managed list (see
+// src/services/editorialBoardService.ts and
+// src/pages/EditorialBoardPage.tsx), never to hardcode verbatim as if
+// they were real content.
 
 export const PRIVACY_POLICY_TEXT = `PRIVACY POLICY
 
@@ -676,3 +696,344 @@ These Terms, together with the Privacy Policy and any separate agreements applic
 ## 30. Contact
 
 For questions regarding these Terms, contributor matters, account issues, privacy, or other legal concerns, contact THE RESERVE through the official contact information provided on the website.`;
+
+export const EDITORIAL_POLICY_MARKDOWN = `# EDITORIAL POLICY
+
+THE RESERVE is an independent editorial platform dedicated to people, ideas, culture, style, business, creativity, technology, and the forces shaping contemporary life.
+
+Our editorial policy exists to protect the quality, independence, and credibility of everything we publish.
+
+## Editorial Independence
+
+THE RESERVE maintains editorial independence from advertisers, commercial partners, contributors, sponsors, and other external interests.
+
+Advertising, sponsorship, partnerships, affiliate relationships, or commercial arrangements do not guarantee editorial coverage or influence our editorial decisions.
+
+Our editorial team determines what we publish based on relevance, originality, public interest, cultural significance, and editorial merit.
+
+## Accuracy & Verification
+
+We make reasonable efforts to ensure that factual information published by THE RESERVE is accurate and appropriately sourced.
+
+Depending on the nature of a story, our editorial process may involve reviewing:
+
+- Original interviews
+- Official statements
+- Public records
+- Reputable publications
+- Institutional sources
+- Primary source materials
+- Contributor submissions
+- Other verifiable public information
+
+Where appropriate, claims, quotations, statistics, dates, names, and other material facts are checked before publication.
+
+However, THE RESERVE does not guarantee that every piece of information published will remain accurate or complete at all times. Information may change after publication, and errors may occasionally occur.
+
+## Corrections
+
+If we identify a material factual error, we will make a correction where appropriate.
+
+Corrections may be made directly to an article, accompanied by an editorial note when the nature of the correction warrants one.
+
+We encourage readers to report factual errors or significant inaccuracies to our editorial team.
+
+## Sources & Attribution
+
+THE RESERVE respects the work of journalists, photographers, writers, researchers, publications, institutions, and other original creators.
+
+Material obtained from external sources will be appropriately attributed where required.
+
+We do not knowingly present another person's original work as our own.
+
+When an article is based substantially on information reported elsewhere, the relevant source may be identified within the article.
+
+## Original Editorial Work
+
+THE RESERVE may commission, produce, edit, adapt, or independently develop editorial content.
+
+Editorial content may include:
+
+- Features
+- Profiles
+- Interviews
+- Essays
+- Commentary
+- Cultural coverage
+- Fashion and lifestyle stories
+- Business and technology coverage
+- Visual stories
+- Contributor submissions
+
+All submitted material remains subject to editorial review and may be edited for accuracy, clarity, length, structure, style, grammar, and publication standards.
+
+## Artificial Intelligence & Editorial Production
+
+THE RESERVE may use artificial intelligence-assisted tools in parts of its editorial workflow, including research organization, summarization, drafting assistance, translation, editing, formatting, metadata generation, and content production.
+
+AI-assisted material is not automatically considered publication-ready.
+
+Editorial material remains subject to human editorial review, fact-checking, quality control, and approval before publication.
+
+AI tools are not treated as authoritative sources, and THE RESERVE does not knowingly publish fabricated information as fact.
+
+## Editorial Tone
+
+THE RESERVE aims to produce intelligent, distinctive, visually considered, and accessible journalism and editorial storytelling.
+
+We value:
+
+- Accuracy over sensationalism.
+- Substance over noise.
+- Originality over imitation.
+- Context over clickbait.
+- Editorial judgment over commercial pressure.
+
+## Conflicts of Interest
+
+Editors, writers, contributors, and other participants in editorial production are expected to disclose relevant conflicts of interest where such conflicts could reasonably affect editorial judgment.
+
+THE RESERVE may decline or modify coverage where a conflict creates a significant concern regarding editorial independence.
+
+## Sponsored & Commercial Content
+
+Commercially sponsored material will be distinguished from independent editorial content.
+
+Advertisers and commercial partners do not receive editorial control over independent stories.
+
+Where appropriate, sponsored content will carry clear labeling such as Sponsored, Partner Content, Advertisement, or another suitable designation.
+
+## Right to Edit or Decline
+
+THE RESERVE reserves the editorial right to:
+
+- Edit submitted material
+- Request clarification or additional information
+- Reject submissions
+- Remove content that violates our standards
+- Update previously published material
+- Correct factual errors
+- Remove material where publication creates legitimate legal, ethical, or safety concerns
+
+## Our Standard
+
+THE RESERVE seeks to build a publication that readers can trust for its judgment, originality, and integrity.
+
+Our editorial policy may evolve as the publication develops.
+
+*Last updated: August 2026*`;
+
+export const ADVERTISING_MARKDOWN = `# ADVERTISING & PARTNERSHIPS
+
+THE RESERVE works with brands, organizations, institutions, and businesses that share an interest in reaching an engaged audience interested in culture, fashion, business, technology, creativity, lifestyle, and contemporary ideas.
+
+We offer carefully considered advertising and partnership opportunities while maintaining a clear distinction between commercial activity and independent editorial judgment.
+
+## Advertising Opportunities
+
+Depending on availability, THE RESERVE may offer:
+
+- Digital display advertising
+- Brand campaigns
+- Sponsored features
+- Partner content
+- Branded editorial projects
+- Social media campaigns
+- Event partnerships
+- Product or service features
+- Special issues and thematic campaigns
+- Custom editorial collaborations
+
+Available formats, specifications, pricing, and placement options may vary.
+
+## Editorial Independence
+
+Advertising does not guarantee editorial coverage.
+
+Advertisers and commercial partners cannot purchase favorable independent editorial treatment.
+
+Our editorial team retains responsibility for determining whether, how, and when independent editorial content is published.
+
+## Sponsored Content
+
+Sponsored or commercially commissioned content will be identified appropriately.
+
+Sponsored content may be produced in collaboration with a brand or organization, but it must still comply with THE RESERVE's applicable editorial, legal, and content standards.
+
+## Advertising Standards
+
+THE RESERVE reserves the right to reject, remove, or modify advertisements that we believe:
+
+- Are misleading or deceptive
+- Make unsupported claims
+- Violate applicable law
+- Infringe intellectual property rights
+- Contain offensive or inappropriate material
+- Promote illegal activities
+- Misrepresent products, services, or organizations
+- Conflict materially with our publication standards
+
+Acceptance of an advertisement does not constitute endorsement of the advertiser, its products, or its claims.
+
+## Brand Partnerships
+
+We may collaborate with brands and organizations on special editorial or creative projects.
+
+Such partnerships will be structured so that the commercial nature of the relationship is appropriately disclosed where required.
+
+## Advertising Materials
+
+Advertisers and partners are responsible for ensuring that materials supplied to THE RESERVE:
+
+- Are accurate
+- Are lawful
+- Do not infringe third-party rights
+- Do not contain unauthorized copyrighted material
+- Do not violate applicable advertising regulations
+
+The advertiser or partner remains responsible for claims made in its advertising materials.
+
+## Contact
+
+For advertising, sponsorship, partnership, or commercial collaboration inquiries, please contact THE RESERVE through the official contact channel provided on this website.
+
+*Last updated: August 2026*`;
+
+export const LEGAL_MARKDOWN = `# LEGAL
+
+This page provides general legal information governing the use of THE RESERVE website and its content.
+
+By accessing or using this website, you acknowledge and agree to comply with the applicable policies, terms, and notices published by THE RESERVE.
+
+## Website Ownership
+
+Unless otherwise stated, the website, its design, branding, editorial presentation, original text, graphics, photographs, videos, logos, trademarks, software, and other materials are owned by or licensed to THE RESERVE Magazine Group or its respective rights holders.
+
+All rights reserved.
+
+## Copyright
+
+Original content published by THE RESERVE may not be reproduced, republished, distributed, modified, transmitted, sold, or commercially exploited without prior written permission from the relevant rights holder, except where permitted by applicable law.
+
+Limited quotations or references for purposes such as criticism, commentary, reporting, research, or review may be permitted where legally applicable and where appropriate attribution is provided.
+
+## Third-Party Content
+
+THE RESERVE may publish or display material supplied by contributors, photographers, agencies, partners, public sources, or other third parties.
+
+Ownership of third-party material remains with its respective rights holder unless otherwise agreed.
+
+The appearance of third-party material on THE RESERVE does not necessarily imply endorsement by THE RESERVE.
+
+## User & Contributor Submissions
+
+If you submit photographs, articles, videos, information, social media links, or other material to THE RESERVE, you represent that:
+
+- You have the necessary rights or permissions to submit the material.
+- The material does not knowingly infringe another person's rights.
+- The information you provide is accurate to the best of your knowledge.
+- You have obtained any necessary permissions concerning identifiable individuals appearing in submitted material.
+
+By submitting material, you grant THE RESERVE the rights necessary to review, edit, reproduce, publish, distribute, display, archive, and promote the submitted material in connection with THE RESERVE, subject to the applicable contributor agreement or submission terms.
+
+## Trademarks
+
+THE RESERVE and its associated names, logos, marks, visual identities, and branding elements may constitute trademarks or protected identifiers.
+
+Nothing on this website grants any person a license to use such marks without prior written permission.
+
+## External Links
+
+THE RESERVE may provide links to websites, platforms, publications, social media accounts, or other third-party services.
+
+THE RESERVE does not control those external websites and is not responsible for their content, security, availability, privacy practices, or policies.
+
+Users should review the applicable policies of external services before interacting with them.
+
+## Third-Party Platforms
+
+THE RESERVE may use third-party platforms and services, including social media, authentication providers, hosting services, analytics services, content delivery services, and application programming interfaces.
+
+Use of such services may be subject to the terms and privacy policies of those respective providers.
+
+## No Warranty
+
+THE RESERVE makes reasonable efforts to maintain the website and its content but does not guarantee that:
+
+- The website will always be available;
+- All information will always be complete or current;
+- The website will be free from errors;
+- Third-party services will remain available; or
+- The website will always operate without interruption.
+
+Use of the website is at the user's own discretion and risk to the extent permitted by applicable law.
+
+## Limitation of Responsibility
+
+Nothing on THE RESERVE should be interpreted as professional legal, financial, medical, investment, or other specialized advice unless expressly identified as such.
+
+Readers should seek appropriate professional advice before making decisions based on information published on the website.
+
+To the maximum extent permitted by applicable law, THE RESERVE shall not be responsible for losses arising from reliance on general editorial information published on the website.
+
+## Privacy
+
+THE RESERVE collects and processes certain information in connection with website operation, contributor submissions, user accounts, authentication, communications, and other services.
+
+Our collection and handling of personal information is described in our Privacy Policy.
+
+## Terms of Service
+
+Use of the website is also governed by our Terms of Service.
+
+## Policy Changes
+
+THE RESERVE may update this Legal page and other website policies from time to time.
+
+Changes become effective when published on this website unless otherwise stated.
+
+## Contact
+
+For copyright, legal, licensing, permissions, or other legal inquiries, please contact THE RESERVE through the official contact channel provided on this website.`;
+
+// Static intro/philosophy portion only -- stops after "Our Philosophy".
+// See this file's header comment for why the "Board Members" section and
+// its bracketed placeholder entries are deliberately not included here.
+export const EDITORIAL_BOARD_INTRO_MARKDOWN = `# EDITORIAL BOARD
+
+The Editorial Board of THE RESERVE provides strategic editorial oversight and helps protect the publication's standards, identity, and long-term direction.
+
+The board represents the publication's commitment to thoughtful journalism, cultural relevance, editorial independence, and responsible publishing.
+
+## Our Role
+
+The Editorial Board may contribute to:
+
+- Editorial direction
+- Publication standards
+- Long-term editorial strategy
+- Quality and integrity standards
+- Major editorial initiatives
+- Special projects and issues
+- Standards concerning corrections and editorial accountability
+- Development of THE RESERVE's voice and identity
+
+## Editorial Independence
+
+The Editorial Board operates independently from commercial advertising decisions.
+
+Commercial relationships do not determine editorial appointments, coverage decisions, or editorial positions.
+
+## Editorial Responsibility
+
+While individual editors, writers, contributors, and creative professionals may be responsible for specific pieces of content, the Editorial Board helps establish the broader standards under which THE RESERVE operates.
+
+## Our Philosophy
+
+THE RESERVE believes that a modern publication should do more than report what is happening.
+
+It should examine why it matters.
+
+Our editorial approach is built around curiosity, context, strong storytelling, visual intelligence, and respect for the audience.
+
+We seek voices that challenge assumptions, introduce new perspectives, document meaningful work, and contribute something valuable to the cultural conversation.`;
