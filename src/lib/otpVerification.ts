@@ -15,8 +15,24 @@ export interface VerifyOtpResult {
 
 export type VerifyOtpFn = (args: { email: string; token: string; type: 'signup' }) => Promise<VerifyOtpResult>;
 
+// Supabase's "OTP Length" project setting (Authentication -> Sign In /
+// Providers -> Email -> OTP Settings) can be configured anywhere from 6
+// to 10 digits, and differs by project (this one's default was 8 before
+// being changed to 6). These bounds match Supabase's own documented
+// constraint -- deliberately NOT a fixed length -- so this input keeps
+// working if that dashboard setting is ever changed again later.
+export const OTP_MIN_LENGTH = 6;
+export const OTP_MAX_LENGTH = 10;
+
+/** Whether `code` is a plausible OTP code -- all digits, within Supabase's allowed 6-10 digit length range. Used by ContributorVerifyEmailPage to validate before calling verifySignupOtp() and to enable/disable its Verify button. */
+export function isValidOtpCode(code: string): boolean {
+  return new RegExp(`^\\d{${OTP_MIN_LENGTH},${OTP_MAX_LENGTH}}$`).test(code);
+}
+
 /**
- * Verifies the 6-digit signup confirmation code against Supabase Auth via
+ * Verifies the signup confirmation OTP code (its length is a per-project
+ * Supabase dashboard setting, 6-10 digits -- deliberately not hardcoded
+ * anywhere in this app) against Supabase Auth via
  * the given `verifyOtp` function (production callers pass
  * `supabase.auth.verifyOtp`; tests pass a fake). `type: 'signup'` is
  * hardcoded here -- it is THE specific OTP type for confirming a

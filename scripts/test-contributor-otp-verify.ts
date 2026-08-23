@@ -1,8 +1,16 @@
-// Deterministic, network/DOM-free tests for verifySignupOtp
-// (src/lib/otpVerification.ts) -- the 6-digit-code verification logic
-// behind contributorAuth.ts's verifyContributorSignupOtp(), which
-// replaced the old click-a-link flow on ContributorVerifyEmailPage. Run
-// with `npm run test:contributor-otp-verify`.
+// Deterministic, network/DOM-free tests for verifySignupOtp and
+// isValidOtpCode (src/lib/otpVerification.ts) -- the OTP verification
+// call and length validation behind contributorAuth.ts's
+// verifyContributorSignupOtp(), which replaced the old click-a-link flow
+// on ContributorVerifyEmailPage. Run with
+// `npm run test:contributor-otp-verify`.
+//
+// isValidOtpCode accepts any length in Supabase's documented 6-10 digit
+// range, NOT a hardcoded 6 -- this project's own OTP Length dashboard
+// setting has already been seen at both 6 and 8 (it defaults to one or
+// the other depending on when the project was provisioned, and is
+// changeable at any time), so the tests below exercise 6, 8, and 10
+// digits as all equally valid, plus the out-of-range boundaries.
 //
 // Deliberately imports from otpVerification.ts, NOT contributorAuth.ts:
 // contributorAuth.ts imports src/lib/supabase.ts, which reads
@@ -18,7 +26,7 @@
 // logic verifyContributorSignupOtp() delegates to, not an approximation
 // of it, with Supabase's `verifyOtp` replaced by a fake.
 
-import { verifySignupOtp, type VerifyOtpFn } from '../src/lib/otpVerification';
+import { verifySignupOtp, isValidOtpCode, type VerifyOtpFn } from '../src/lib/otpVerification';
 
 let passed = 0;
 let failed = 0;
@@ -44,7 +52,7 @@ function fakeVerifyOtp(result: { error: { message: string } | null }) {
 }
 
 async function testSuccessPathPassesCorrectTypeAndResolves() {
-  console.log('\n=== verifySignupOtp: success path calls Supabase with type "signup" and resolves ===');
+  console.log('\n=== verifySignupOtp: success path calls Supabase with type "signup" and resolves, for a 6-digit code ===');
   const { fn, calls } = fakeVerifyOtp({ error: null });
 
   let threw = false;
@@ -62,6 +70,24 @@ async function testSuccessPathPassesCorrectTypeAndResolves() {
   assert(call.token === '123456', 'the token passed through is exactly what the user typed', call);
 }
 
+async function testSuccessPathAlsoWorksForAnEightDigitCode() {
+  console.log('\n=== verifySignupOtp: also succeeds for an 8-digit code -- this app never hardcodes the length ===');
+  // This project's own Supabase "OTP Length" setting has been seen at 8
+  // (its provisioning default) as well as 6 -- verifySignupOtp() itself
+  // has no opinion on length at all, it just passes the token through.
+  const { fn, calls } = fakeVerifyOtp({ error: null });
+
+  let threw = false;
+  try {
+    await verifySignupOtp(fn, 'writer@example.com', '12345678');
+  } catch {
+    threw = true;
+  }
+
+  assert(threw === false, 'an 8-digit code resolves without throwing, same as a 6-digit one');
+  assert(calls[0]?.token === '12345678', 'the full 8-digit token is passed through, not truncated to 6', calls[0]);
+}
+
 async function testInvalidCodePathThrowsSupabaseError() {
   console.log('\n=== verifySignupOtp: wrong/expired code rejects with the Supabase error message ===');
   const { fn } = fakeVerifyOtp({ error: { message: 'Token has expired or is invalid' } });
@@ -77,9 +103,27 @@ async function testInvalidCodePathThrowsSupabaseError() {
   assert(caught?.message === 'Token has expired or is invalid', "the thrown error carries Supabase's actual message, for the UI to show inline", caught);
 }
 
+function testIsValidOtpCodeAcceptsTheWholeSupabaseRange() {
+  console.log('\n=== isValidOtpCode: accepts every length Supabase allows (6-10 digits), not just 6 ===');
+  assert(isValidOtpCode('123456') === true, '6 digits is valid (this project\'s current OTP Length setting)');
+  assert(isValidOtpCode('12345678') === true, '8 digits is valid (this project\'s OTP Length before it was changed)');
+  assert(isValidOtpCode('1234567890') === true, '10 digits is valid (the top of Supabase\'s documented range)');
+}
+
+function testIsValidOtpCodeRejectsOutOfRangeOrNonNumeric() {
+  console.log('\n=== isValidOtpCode: rejects codes outside Supabase\'s 6-10 digit range, and non-numeric input ===');
+  assert(isValidOtpCode('12345') === false, '5 digits (one under the 6-digit floor) is rejected');
+  assert(isValidOtpCode('12345678901') === false, '11 digits (one over the 10-digit ceiling) is rejected');
+  assert(isValidOtpCode('') === false, 'an empty string is rejected');
+  assert(isValidOtpCode('12a456') === false, 'a non-digit character is rejected even at a valid length');
+}
+
 async function main() {
   await testSuccessPathPassesCorrectTypeAndResolves();
+  await testSuccessPathAlsoWorksForAnEightDigitCode();
   await testInvalidCodePathThrowsSupabaseError();
+  testIsValidOtpCodeAcceptsTheWholeSupabaseRange();
+  testIsValidOtpCodeRejectsOutOfRangeOrNonNumeric();
 
   console.log(`\n=== SUMMARY === ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

@@ -19,7 +19,9 @@ import { verifySignupOtp } from './otpVerification';
 /**
  * Email + password signup. The "Confirm signup" email template (Supabase
  * dashboard) has been customized to include `{{ .Token }}` -- Supabase's
- * built-in 6-digit OTP code -- rather than relying on the default
+ * built-in OTP code (its length is a per-project Supabase dashboard
+ * setting, 6-10 digits -- not something this app hardcodes) -- rather
+ * than relying on the default
  * confirmation link. `emailRedirectTo` is still set (it's a required
  * option, and covers the case where the template also renders a link),
  * but the actual verification path is ContributorVerifyEmailPage's code
@@ -42,7 +44,7 @@ export async function signUpContributor(email: string, password: string): Promis
   if (error) throw error;
 }
 
-/** Re-sends the signup confirmation email (now a 6-digit code -- see verifyContributorSignupOtp below) -- for ContributorVerifyEmailPage's "Resend" action, when the first email didn't arrive or expired. `type: 'signup'` re-triggers the SAME "Confirm signup" template as signUp() itself, so it carries the same `{{ .Token }}` code; no dashboard changes were needed to make resend produce a fresh code too. Works off the plain email string, no active session required (matters for the case where signUp() didn't issue one). */
+/** Re-sends the signup confirmation email (now an OTP code -- see verifyContributorSignupOtp below) -- for ContributorVerifyEmailPage's "Resend" action, when the first email didn't arrive or expired. `type: 'signup'` re-triggers the SAME "Confirm signup" template as signUp() itself, so it carries the same `{{ .Token }}` code; no dashboard changes were needed to make resend produce a fresh code too. Works off the plain email string, no active session required (matters for the case where signUp() didn't issue one). */
 export async function resendConfirmationEmail(email: string): Promise<void> {
   const { error } = await supabase.auth.resend({
     type: 'signup',
@@ -53,7 +55,7 @@ export async function resendConfirmationEmail(email: string): Promise<void> {
 }
 
 /**
- * Verifies the 6-digit code the user typed into ContributorVerifyEmailPage
+ * Verifies the OTP code the user typed into ContributorVerifyEmailPage
  * against Supabase Auth, confirming the account signUpContributor() just
  * created. On success, Supabase Auth sets a confirmed session for `email`
  * as a side effect of this call; the caller is responsible for syncing
