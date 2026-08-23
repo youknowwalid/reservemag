@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { signOutEverywhere } from './contributorSignOut';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
@@ -52,7 +53,27 @@ export const signInWithUsernamePassword = async (username: string, password: str
   if (error) throw new Error('Incorrect username or password.');
 };
 
+/**
+ * Ends the current session. See contributorSignOut.ts's doc comment for
+ * why this doesn't just call `supabase.auth.signOut()` and throw on
+ * error like it used to -- that left Sign Out non-functional whenever
+ * the session-invalidation network call itself failed, since the local
+ * session was never guaranteed to be cleared and the caller's
+ * post-logout redirect never ran either. This never throws: the local
+ * session is always gone by the time it resolves, so the caller can
+ * always safely proceed to a logged-out UI state.
+ */
 export const logout = async () => {
-  const { error } = await supabase.auth.signOut();
-  if (error) throw error;
+  await signOutEverywhere(
+    () => supabase.auth.signOut(),
+    () => {
+      try {
+        Object.keys(localStorage)
+          .filter((key) => key.startsWith('sb-') && key.endsWith('-auth-token'))
+          .forEach((key) => localStorage.removeItem(key));
+      } catch {
+        // localStorage can throw in locked-down/private-browsing contexts -- never let cleanup itself block sign-out.
+      }
+    },
+  );
 };
