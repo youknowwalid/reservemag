@@ -15,6 +15,8 @@
     "test:news-banner-template": "tsx scripts/test-news-banner-template.ts",
     "test:contributor-signup": "tsx scripts/test-contributor-signup.ts",
     "test:contributor-otp-verify": "tsx scripts/test-contributor-otp-verify.ts",
+    "test:profile-completion": "tsx scripts/test-profile-completion.ts",
+    "test:contributor-admin-actions": "tsx scripts/test-contributor-admin-actions.ts",
     "test:submission-review": "tsx scripts/test-submission-review.ts",
     "test:editorial-auth": "tsx --env-file-if-exists=.env scripts/test-editorial-auth-propagation.ts",
     "test:editorial-provider": "tsx scripts/test-editorial-provider-responses.ts",

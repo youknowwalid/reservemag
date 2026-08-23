@@ -30,7 +30,7 @@ interface LocationState {
  * and navigates straight to /contribute/profile in one action.
  */
 export default function ContributorVerifyEmailPage() {
-  const { user, contributor, emailConfirmed, loading, reloadSession } = useContributor();
+  const { user, contributor, emailConfirmed, isRemoved, loading, reloadSession } = useContributor();
   const location = useLocation();
   const navigate = useNavigate();
   const pendingEmail = (location.state as LocationState | null)?.email;
@@ -43,7 +43,7 @@ export default function ContributorVerifyEmailPage() {
 
   if (!loading) {
     const redirect = resolveVerifyEmailPageRedirect(
-      { hasUser: Boolean(user), emailConfirmed, hasContributor: Boolean(contributor) },
+      { hasUser: Boolean(user), emailConfirmed, hasContributor: Boolean(contributor), isRemoved },
       Boolean(pendingEmail),
     );
     if (redirect) return <Navigate to={redirect} replace />;

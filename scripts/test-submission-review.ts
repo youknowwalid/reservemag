@@ -84,6 +84,10 @@ function fakeContributor(overrides: Partial<Contributor> = {}): Contributor {
     phoneNumber: '+1-555-0100',
     category: 'journalist',
     profilePhotoUrl: 'https://example.com/jane.jpg',
+    bio: 'Culture writer covering fashion and film.',
+    city: 'London',
+    country: 'United Kingdom',
+    specialtyTags: ['Fashion', 'Culture'],
     socialMediaUrls: { instagram: 'https://instagram.com/jane' },
     legacyDesignation: null,
     legacyRole: null,
@@ -187,6 +191,28 @@ function testSlugsAreUnique() {
   assert(rowA.slug !== rowB.slug, 'the submission-id-derived suffix prevents a slug collision between two same-titled approvals', { a: rowA.slug, b: rowB.slug });
 }
 
+function testAuthorBylineIsASnapshotIndependentOfLaterContributorState() {
+  console.log('\n=== buildArticleRowFromSubmission: the published byline is a snapshot, unaffected by what happens to the contributor row afterward (e.g. admin "Delete User") ===');
+  // The actual guarantee behind "an already-published article's byline
+  // survives a contributor deletion" (see
+  // contributorAdminActions.ts's buildContributorRemovalPatch and
+  // scripts/test-contributor-admin-actions.ts) is exactly this: `author`
+  // is set ONCE, here, at publish/approval time, as a plain string --
+  // never re-derived from a live join to `contributors` afterward. A
+  // contributor object shaped like a JUST-removed row (status:
+  // 'removed', email/phone cleared) still produces a completely normal
+  // byline, proving this function reads nothing that removal would ever
+  // touch.
+  const submission = fakeSubmission({ contentType: 'article', title: 'A Profile Piece', body: 'Enough words to count as a paragraph here.' });
+  const removedContributor = fakeContributor({ status: 'removed', email: '', phoneNumber: '' });
+  const row = buildArticleRowFromSubmission(submission, removedContributor);
+
+  assert(row.author === removedContributor.fullName, 'author text is set from fullName regardless of the contributor\'s status', row.author);
+  assert(row.author_id === removedContributor.id, 'author_id still links to the (now-tombstoned) contributor row -- the link itself is untouched by removal', row.author_id);
+  const image = row.image as { credit: string };
+  assert(image.credit === removedContributor.fullName, 'image credit is the same fullName snapshot, not re-derived from anything removal clears', image.credit);
+}
+
 function testGenerateSlugFromTitle() {
   console.log('\n=== generateSlugFromTitle: matches articleService.generateSlug\'s existing behavior ===');
   assert(generateSlugFromTitle('Hello, World!') === 'hello-world', 'punctuation stripped, spaces hyphenated', generateSlugFromTitle('Hello, World!'));
@@ -206,6 +232,7 @@ async function main() {
   testVideoBlockFromMedia();
   testVideoBlockMissingMediaNeverThrows();
   testArticleRowShape();
+  testAuthorBylineIsASnapshotIndependentOfLaterContributorState();
   testPhotoStoryRowUsesFirstPhotoAsHero();
   testSlugsAreUnique();
   testGenerateSlugFromTitle();

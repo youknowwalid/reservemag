@@ -5,13 +5,13 @@ import Navbar from '../../components/Navbar';
 import Footer from '../../components/Footer';
 import { useContributor } from '../../context/ContributorContext';
 import { contributorService } from '../../services/contributorService';
-import { ContributorCategory } from '../../types';
+import { ContributorCategory, SPECIALTY_TAGS, SpecialtyTag } from '../../types';
 import ContributorWelcomeModal from '../../components/contribute/ContributorWelcomeModal';
 import { resolveProfilePageRedirect } from '../../lib/contributorRouting';
+import { validateProfileCompletionInput, BIO_MAX_LENGTH } from '../../lib/profileValidation';
 import {
   validateFileTypeAndSize,
   validateImageResolution,
-  isValidHttpUrl,
   CONTRIBUTOR_PROFILE_PHOTO_MAX_BYTES,
   CONTRIBUTOR_PROFILE_PHOTO_MIN_WIDTH,
   CONTRIBUTOR_PROFILE_PHOTO_MIN_HEIGHT,
@@ -25,17 +25,27 @@ const CATEGORIES: { value: ContributorCategory; label: string }[] = [
 ];
 
 // Step 3 -- required profile completion. Every field here is required
-// together (no partial save); the dashboard is unreachable until this
-// submits successfully (see ContributorProtectedRoute). On success, shows
-// the Step 4 "Congratulations" modal before handing off to the dashboard.
+// together EXCEPT social links (all five -- Instagram, Facebook,
+// LinkedIn, X/Twitter, Website/Other -- are optional; see
+// profileValidation.ts's ProfileCompletionFormInput doc comment for why
+// that changed from "Instagram required, others optional"); the
+// dashboard is unreachable until this submits successfully (see
+// ContributorProtectedRoute). On success, shows the Step 4
+// "Congratulations" modal before handing off to the dashboard.
 export default function ContributorProfilePage() {
-  const { user, contributor, emailConfirmed, loading, refreshContributor } = useContributor();
+  const { user, contributor, emailConfirmed, isRemoved, loading, refreshContributor } = useContributor();
   const navigate = useNavigate();
 
   const [fullName, setFullName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [category, setCategory] = useState<ContributorCategory>('journalist');
+  const [bio, setBio] = useState('');
+  const [city, setCity] = useState('');
+  const [country, setCountry] = useState('');
+  const [specialtyTags, setSpecialtyTags] = useState<SpecialtyTag[]>([]);
   const [instagramUrl, setInstagramUrl] = useState('');
+  const [facebookUrl, setFacebookUrl] = useState('');
+  const [linkedinUrl, setLinkedinUrl] = useState('');
   const [twitterUrl, setTwitterUrl] = useState('');
   const [websiteUrl, setWebsiteUrl] = useState('');
 
@@ -55,9 +65,13 @@ export default function ContributorProfilePage() {
   // they land here from the right screen") is bounced to the
   // verification step even if they navigate straight to this URL.
   if (!loading) {
-    const redirect = resolveProfilePageRedirect({ hasUser: Boolean(user), emailConfirmed, hasContributor: Boolean(contributor) });
+    const redirect = resolveProfilePageRedirect({ hasUser: Boolean(user), emailConfirmed, hasContributor: Boolean(contributor), isRemoved });
     if (redirect) return <Navigate to={redirect} replace />;
   }
+
+  const toggleTag = (tag: SpecialtyTag) => {
+    setSpecialtyTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
+  };
 
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -95,40 +109,43 @@ export default function ContributorProfilePage() {
     setError(null);
 
     if (!user) return;
-    if (!fullName.trim() || !phoneNumber.trim()) {
-      setError('Full name and phone number are required.');
-      return;
-    }
-    if (!photoFile) {
-      setError('A profile photo is required.');
-      return;
-    }
-    if (!instagramUrl.trim() || !isValidHttpUrl(instagramUrl)) {
-      setError('A valid Instagram URL is required (e.g. https://instagram.com/yourhandle).');
-      return;
-    }
-    if (twitterUrl.trim() && !isValidHttpUrl(twitterUrl)) {
-      setError('The X/Twitter URL is not a valid link.');
-      return;
-    }
-    if (websiteUrl.trim() && !isValidHttpUrl(websiteUrl)) {
-      setError('The website URL is not a valid link.');
+
+    const socialMediaUrls = {
+      ...(instagramUrl.trim() ? { instagram: instagramUrl.trim() } : {}),
+      ...(facebookUrl.trim() ? { facebook: facebookUrl.trim() } : {}),
+      ...(linkedinUrl.trim() ? { linkedin: linkedinUrl.trim() } : {}),
+      ...(twitterUrl.trim() ? { twitter: twitterUrl.trim() } : {}),
+      ...(websiteUrl.trim() ? { website: websiteUrl.trim() } : {}),
+    };
+
+    const validation = validateProfileCompletionInput({
+      fullName,
+      phoneNumber,
+      hasPhoto: Boolean(photoFile),
+      bio,
+      city,
+      country,
+      specialtyTags,
+      socialMediaUrls,
+    });
+    if (validation.ok === false) {
+      setError(validation.reason);
       return;
     }
 
     setSubmitting(true);
     try {
-      const profilePhotoUrl = await contributorService.uploadProfilePhoto(photoFile, user.id);
+      const profilePhotoUrl = await contributorService.uploadProfilePhoto(photoFile!, user.id);
       await contributorService.completeProfile(user.id, user.email || '', {
         fullName: fullName.trim(),
         phoneNumber: phoneNumber.trim(),
         category,
         profilePhotoUrl,
-        socialMediaUrls: {
-          instagram: instagramUrl.trim(),
-          ...(twitterUrl.trim() ? { twitter: twitterUrl.trim() } : {}),
-          ...(websiteUrl.trim() ? { website: websiteUrl.trim() } : {}),
-        },
+        bio: bio.trim(),
+        city: city.trim(),
+        country: country.trim(),
+        specialtyTags,
+        socialMediaUrls,
       });
       await refreshContributor();
       setShowWelcome(true);
@@ -145,7 +162,7 @@ export default function ContributorProfilePage() {
       <div className="max-w-2xl mx-auto px-6 py-24 space-y-10">
         <div className="text-center space-y-3">
           <h1 className="text-3xl font-serif">Complete Your Profile</h1>
-          <p className="text-sm text-zinc-500">Every field below is required before your dashboard unlocks.</p>
+          <p className="text-sm text-zinc-500">Every field below is required before your dashboard unlocks, except social links.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-8">
@@ -172,6 +189,47 @@ export default function ContributorProfilePage() {
             </div>
           </div>
 
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-zinc-500 block">City</label>
+              <input
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                className="w-full bg-black border border-white/10 p-4 text-sm outline-none focus:border-reserve-accent"
+                placeholder="e.g. Dubai"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] uppercase tracking-widest text-zinc-500 block">Country</label>
+              <input
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                className="w-full bg-black border border-white/10 p-4 text-sm outline-none focus:border-reserve-accent"
+                placeholder="e.g. United Arab Emirates"
+                required
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] uppercase tracking-widest text-zinc-500 block">Short Professional Bio</label>
+              <span className={`text-[10px] ${bio.length > BIO_MAX_LENGTH ? 'text-rose-400' : 'text-zinc-600'}`}>
+                {bio.length}/{BIO_MAX_LENGTH}
+              </span>
+            </div>
+            <textarea
+              value={bio}
+              onChange={(e) => setBio(e.target.value.slice(0, BIO_MAX_LENGTH))}
+              maxLength={BIO_MAX_LENGTH}
+              rows={3}
+              className="w-full bg-black border border-white/10 p-4 text-sm outline-none focus:border-reserve-accent resize-none"
+              placeholder="2-3 sentences about your work and beat."
+              required
+            />
+          </div>
+
           <div className="space-y-2">
             <label className="text-[10px] uppercase tracking-widest text-zinc-500 block">Category</label>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -185,6 +243,24 @@ export default function ContributorProfilePage() {
                   }`}
                 >
                   {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] uppercase tracking-widest text-zinc-500 block">Areas of Interest -- select at least one</label>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {SPECIALTY_TAGS.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => toggleTag(tag)}
+                  className={`py-3 text-[10px] uppercase tracking-widest border transition-all ${
+                    specialtyTags.includes(tag) ? 'bg-white text-black border-white' : 'border-white/10 text-zinc-500 hover:text-white'
+                  }`}
+                >
+                  {tag}
                 </button>
               ))}
             </div>
@@ -215,33 +291,38 @@ export default function ContributorProfilePage() {
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-widest text-zinc-500 block">Instagram URL (required)</label>
+          <div className="space-y-2">
+            <label className="text-[10px] uppercase tracking-widest text-zinc-500 block">Social Links (all optional)</label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <input
                 value={instagramUrl}
                 onChange={(e) => setInstagramUrl(e.target.value)}
                 className="w-full bg-black border border-white/10 p-4 text-sm font-mono outline-none focus:border-reserve-accent"
-                placeholder="https://instagram.com/..."
-                required
+                placeholder="Instagram -- https://instagram.com/..."
               />
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-widest text-zinc-500 block">X / Twitter URL (optional)</label>
+              <input
+                value={facebookUrl}
+                onChange={(e) => setFacebookUrl(e.target.value)}
+                className="w-full bg-black border border-white/10 p-4 text-sm font-mono outline-none focus:border-reserve-accent"
+                placeholder="Facebook -- https://facebook.com/..."
+              />
+              <input
+                value={linkedinUrl}
+                onChange={(e) => setLinkedinUrl(e.target.value)}
+                className="w-full bg-black border border-white/10 p-4 text-sm font-mono outline-none focus:border-reserve-accent"
+                placeholder="LinkedIn -- https://linkedin.com/in/..."
+              />
               <input
                 value={twitterUrl}
                 onChange={(e) => setTwitterUrl(e.target.value)}
                 className="w-full bg-black border border-white/10 p-4 text-sm font-mono outline-none focus:border-reserve-accent"
-                placeholder="https://x.com/..."
+                placeholder="X / Twitter -- https://x.com/..."
               />
-            </div>
-            <div className="space-y-2 md:col-span-2">
-              <label className="text-[10px] uppercase tracking-widest text-zinc-500 block">Website / Other URL (optional)</label>
               <input
                 value={websiteUrl}
                 onChange={(e) => setWebsiteUrl(e.target.value)}
-                className="w-full bg-black border border-white/10 p-4 text-sm font-mono outline-none focus:border-reserve-accent"
-                placeholder="https://..."
+                className="w-full bg-black border border-white/10 p-4 text-sm font-mono outline-none focus:border-reserve-accent md:col-span-2"
+                placeholder="Website / Other -- https://..."
               />
             </div>
           </div>

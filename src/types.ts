@@ -42,6 +42,13 @@ export interface Author {
 /** Single-select, confirmed with the requester rather than assumed multi-select. Matches the `contributors.category` check constraint (migration: add_contributors). */
 export type ContributorCategory = 'journalist' | 'photographer' | 'videographer' | 'other';
 
+/** Fixed vocabulary, multi-select ("a contributor may cover more than one area") -- matches the `contributors.specialty_tags` CHECK constraint (migration: expand_contributor_profile_and_removal_lock) exactly. Canonical list lives here, not duplicated per-component. */
+export const SPECIALTY_TAGS = [
+  'Fashion', 'Beauty', 'Culture', 'Politics', 'Business', 'Lifestyle',
+  'Travel', 'Technology', 'Entertainment', 'Sports', 'Photography', 'Other',
+] as const;
+export type SpecialtyTag = (typeof SPECIALTY_TAGS)[number];
+
 /**
  * The single source of truth for both self-registered "Become a
  * Contributor" accounts AND the legacy manually-curated byline registry
@@ -55,25 +62,41 @@ export type ContributorCategory = 'journalist' | 'photographer' | 'videographer'
  * for legacy rows (they predate any login system and have no
  * auth.users account at all). A registered contributor's row is created
  * once, on profile completion (see contributorService.ts), with no
- * partial/draft state -- every non-legacy field is required together.
- * `status` defaults to 'active' (no vetting gate) and exists for a
- * future moderation stage that hasn't been built yet.
+ * partial/draft state -- every non-legacy field is required together
+ * EXCEPT social links (see socialMediaUrls below).
+ *
+ * `status` defaults to 'active' (no vetting gate). It also now carries
+ * the admin "Delete User" tombstone state: 'removed' means login access
+ * has been revoked at the application/RLS layer (see the
+ * expand_contributor_profile_and_removal_lock migration's write-policy
+ * changes) and email/phoneNumber have been cleared -- the row itself is
+ * never deleted, so it still shows in the admin Authors table and any
+ * already-published article's `author` text (a snapshot, not a live
+ * join -- see buildArticleRowFromSubmission) is unaffected either way.
  */
 export interface Contributor {
   id: string;
   accountType: 'legacy' | 'registered';
-  /** Supabase Auth uid, or null for a legacy row (no login exists for it). */
+  /** Supabase Auth uid, or null for a legacy row (no login exists for it). Deliberately kept even after removal (`status: 'removed'`) -- its `unique` constraint is what stops a removed contributor from ever inserting a second row for the same identity. */
   authUserId: string | null;
-  /** Empty string for legacy rows -- they were never given an email. */
+  /** Empty string for legacy rows, and cleared to empty string on removal (see `status`). */
   email: string;
   fullName: string;
-  /** Empty string for legacy rows. */
+  /** Empty string for legacy rows, and cleared to empty string on removal (see `status`). */
   phoneNumber: string;
   category: ContributorCategory | null;
   profilePhotoUrl: string | null;
-  /** Keyed by platform so the public author card can render the right icon per URL without a schema change. `instagram` is required for a registered signup; every key is optional/absent for a legacy row (none had social links). */
+  /** 2-3 sentence professional bio, capped at 300 characters (see profileValidation.ts's BIO_MAX_LENGTH) -- required for a registered signup, null for legacy rows. */
+  bio: string | null;
+  city: string | null;
+  country: string | null;
+  /** At least one required for a registered signup (validated against SPECIALTY_TAGS above); empty for legacy rows. */
+  specialtyTags: SpecialtyTag[];
+  /** Keyed by platform so the public author card can render the right icon per URL without a schema change. Every key is optional -- Instagram was the one required platform at launch, but that requirement was dropped; a registered profile can now be completed with zero social links filled in. */
   socialMediaUrls: {
     instagram?: string;
+    facebook?: string;
+    linkedin?: string;
     twitter?: string;
     website?: string;
   };
