@@ -8,7 +8,7 @@ interface ImageUploadFormProps {
   label: string;
   value: string;
   onChange: (url: string) => void;
-  storagePath?: 'articles' | 'settings' | 'seo';
+  storagePath?: 'articles' | 'settings' | 'seo' | 'editorial-board';
   aspectRatio?: string;
 }
 

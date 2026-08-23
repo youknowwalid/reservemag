@@ -16,6 +16,10 @@ import ArticlePage from './pages/ArticlePage';
 import GetFeaturedPage from './pages/GetFeaturedPage';
 import PrivacyPolicyPage from './pages/legal/PrivacyPolicyPage';
 import TermsOfServicePage from './pages/legal/TermsOfServicePage';
+import EditorialPolicyPage from './pages/legal/EditorialPolicyPage';
+import AdvertisingPage from './pages/legal/AdvertisingPage';
+import LegalPage from './pages/legal/LegalPage';
+import EditorialBoardPage from './pages/EditorialBoardPage';
 import ContributorSignupPage from './pages/contribute/ContributorSignupPage';
 import ContributorVerifyEmailPage from './pages/contribute/ContributorVerifyEmailPage';
 import ContributorProfilePage from './pages/contribute/ContributorProfilePage';
@@ -237,6 +241,11 @@ export default function App() {
             {/* Public, unauthenticated -- linked ONLY from the footer (Footer.tsx). */}
             <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
             <Route path="/terms-of-service" element={<TermsOfServicePage />} />
+            <Route path="/editorial-policy" element={<EditorialPolicyPage />} />
+            <Route path="/advertising" element={<AdvertisingPage />} />
+            <Route path="/legal" element={<LegalPage />} />
+            {/* Unlike the three static pages above, this one's "Board Members" section is admin-managed and dynamic -- see EditorialBoardPage.tsx. */}
+            <Route path="/editorial-board" element={<EditorialBoardPage />} />
             <Route path="/:slug" element={<ArticlePage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
