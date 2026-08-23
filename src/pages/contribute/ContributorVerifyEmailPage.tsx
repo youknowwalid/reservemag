@@ -6,6 +6,7 @@ import Footer from '../../components/Footer';
 import { useContributor } from '../../context/ContributorContext';
 import { resendConfirmationEmail, verifyContributorSignupOtp } from '../../lib/contributorAuth';
 import { resolveVerifyEmailPageRedirect } from '../../lib/contributorRouting';
+import { isValidOtpCode, OTP_MIN_LENGTH, OTP_MAX_LENGTH } from '../../lib/otpVerification';
 
 interface LocationState {
   /** Passed by ContributorSignupPage right after a successful signUpContributor() call -- lets this page show/resend-to the right address even in the "no session issued yet" case (session-required project settings), where ContributorContext's `user` is still null until the code is actually verified. */
@@ -21,7 +22,7 @@ interface LocationState {
  * exactly what let the profile form leak through before this page
  * existed (see contributorAuth.ts's signUpContributor doc comment).
  *
- * The user types the 6-digit code from the "Confirm signup" email
+ * The user types the numeric code from the "Confirm signup" email
  * directly into this page and submits it via verifyContributorSignupOtp()
  * -- there is no separate "click a link, then come back and press
  * continue" step. On a correct code, verifyOtp() itself establishes the
@@ -58,8 +59,8 @@ export default function ContributorVerifyEmailPage() {
       setError('Missing email address -- please sign up again.');
       return;
     }
-    if (!/^\d{6}$/.test(trimmedCode)) {
-      setError('Enter the 6-digit code from your email.');
+    if (!isValidOtpCode(trimmedCode)) {
+      setError('Enter the verification code from your email.');
       return;
     }
     setVerifying(true);
@@ -105,7 +106,7 @@ export default function ContributorVerifyEmailPage() {
         <Mail className="mx-auto text-reserve-accent" size={40} />
         <h1 className="text-2xl font-serif">Verify your email</h1>
         <p className="text-sm text-zinc-400 leading-relaxed">
-          Enter the 6-digit code we sent to <strong className="text-white">{displayEmail}</strong>.
+          Enter the verification code we sent to <strong className="text-white">{displayEmail}</strong>.
         </p>
 
         <form onSubmit={handleVerifyCode} className="space-y-4 pt-2">
@@ -113,12 +114,12 @@ export default function ContributorVerifyEmailPage() {
             type="text"
             inputMode="numeric"
             autoComplete="one-time-code"
-            maxLength={6}
+            maxLength={OTP_MAX_LENGTH}
             value={code}
-            onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, '').slice(0, 6))}
+            onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, '').slice(0, OTP_MAX_LENGTH))}
             className="w-full bg-black border border-white/10 p-4 text-center text-2xl tracking-[0.5em] outline-none focus:border-reserve-accent"
-            placeholder="000000"
-            aria-label="6-digit verification code"
+            placeholder="Verification code"
+            aria-label="Verification code"
           />
 
           {error && <div className="text-rose-400 text-xs">{error}</div>}
@@ -126,7 +127,7 @@ export default function ContributorVerifyEmailPage() {
 
           <button
             type="submit"
-            disabled={verifying || code.trim().length !== 6}
+            disabled={verifying || code.trim().length < OTP_MIN_LENGTH}
             className="w-full py-4 bg-white text-black text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-reserve-accent transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {verifying && <Loader2 className="animate-spin" size={14} />}
