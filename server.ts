@@ -155,8 +155,29 @@ function getTemplatePath(): string {
   return isProd ? path.resolve(process.cwd(), 'dist/index.html') : path.resolve(process.cwd(), 'index.html');
 }
 
+// Top-level slugs that are real pages registered in the client-side router
+// (see src/App.tsx) but are NOT articles -- so getArticleBySlugServer()
+// below will never match them. Without this list the SSR catch-all has no
+// way to distinguish "a real static page" from "a typo'd URL" and 404s
+// both identically, which is exactly the bug this list fixes: crawlers,
+// link-preview bots, and uptime checks all trust the HTTP status code even
+// though a real browser recovers via client-side routing regardless.
+// /contribute covers every /contribute/* sub-route too, since routing
+// below only inspects the first path segment.
+const KNOWN_STATIC_SLUGS = new Set([
+  'contribute',
+  'get-featured',
+  'privacy-policy',
+  'terms-of-service',
+  'editorial-policy',
+  'advertising',
+  'legal',
+  'editorial-board',
+]);
+
 function createSitemapXml(baseUrl: string, articleSlugs: string[]): string {
-  const urls = ['/', '/get-featured', ...articleSlugs.map((slug) => `/${slug}`)];
+  const staticUrls = ['/', ...Array.from(KNOWN_STATIC_SLUGS, (slug) => `/${slug}`)];
+  const urls = [...staticUrls, ...articleSlugs.map((slug) => `/${slug}`)];
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
     .map((url) => `  <url><loc>${escapeHtml(absoluteUrl(baseUrl, url))}</loc></url>`)
     .join('\n')}\n</urlset>`;
@@ -709,6 +730,7 @@ export async function createApp() {
       let image = '/og-default.jpg';
       let article: any = null;
       const isArticle = Boolean(slug && (article = await getArticleBySlugServer(slug)) && article.status === 'published');
+      const isKnownStaticPage = Boolean(slug && KNOWN_STATIC_SLUGS.has(slug));
 
       if (isArticle) {
         title = article.seo?.metaTitle || article.title || title;
@@ -719,10 +741,13 @@ export async function createApp() {
       let template = fs.readFileSync(templatePath, 'utf-8');
       if (viteInstance) template = await viteInstance.transformIndexHtml(req.originalUrl, template);
 
-      const unknownRoute = Boolean(slug && !isArticle);
+      // A route 404s only when it is neither an article nor one of the
+      // known static pages above -- e.g. a typo'd URL or a page (like
+      // /archive) that was never registered in the client router either.
+      const unknownRoute = Boolean(slug && !isArticle && !isKnownStaticPage);
       template = renderMetadata(template, {
         baseUrl: getBaseUrl(req),
-        canonicalPath: isArticle ? `/${article.slug}` : '/',
+        canonicalPath: isArticle ? `/${article.slug}` : urlPath === '/' ? '/' : urlPath,
         title: unknownRoute ? 'Page Not Found' : title,
         description: unknownRoute ? 'The requested story could not be found.' : stripHtml(description),
         image,
