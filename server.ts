@@ -6,12 +6,15 @@ import crypto from 'crypto';
 import {
   getArticleBySlugServer,
   getPublishedArticleSlugsServer,
+  getCategoryByNameSlugServer,
+  getAllCategoryNamesServer,
   getServerSupabase,
   getServerSupabaseInitError,
   insertArticleServer,
   verifyAdminRequest,
   verifyContributorRequest,
 } from './server-supabase';
+import { slugify } from './src/lib/slug';
 // Turns an approved Submission into an articles row. Server-only, no
 // lib/supabase.ts import chain -- see its own header comment.
 import { buildArticleRowFromSubmission, rowToSubmission, rowToContributorForPublish } from './src/services/submissionPublishService';
@@ -173,11 +176,17 @@ const KNOWN_STATIC_SLUGS = new Set([
   'advertising',
   'legal',
   'editorial-board',
+  // /archive (audit NAV-04): unlike the rest of this list it has no
+  // per-request data dependency (every published article, unfiltered),
+  // so -- unlike /category/:categorySlug below -- it doesn't need its own
+  // Supabase lookup to confirm it's "real" before granting it a 200.
+  'archive',
 ]);
 
-function createSitemapXml(baseUrl: string, articleSlugs: string[]): string {
+function createSitemapXml(baseUrl: string, articleSlugs: string[], categoryNames: string[]): string {
   const staticUrls = ['/', ...Array.from(KNOWN_STATIC_SLUGS, (slug) => `/${slug}`)];
-  const urls = [...staticUrls, ...articleSlugs.map((slug) => `/${slug}`)];
+  const categoryUrls = categoryNames.map((name) => `/category/${slugify(name)}`);
+  const urls = [...staticUrls, ...categoryUrls, ...articleSlugs.map((slug) => `/${slug}`)];
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls
     .map((url) => `  <url><loc>${escapeHtml(absoluteUrl(baseUrl, url))}</loc></url>`)
     .join('\n')}\n</urlset>`;
@@ -708,7 +717,8 @@ export async function createApp() {
   });
 
   app.get('/sitemap.xml', async (req, res) => {
-    res.type('application/xml').send(createSitemapXml(getBaseUrl(req), await getPublishedArticleSlugsServer()));
+    const [articleSlugs, categoryNames] = await Promise.all([getPublishedArticleSlugsServer(), getAllCategoryNamesServer()]);
+    res.type('application/xml').send(createSitemapXml(getBaseUrl(req), articleSlugs, categoryNames));
   });
 
   app.get('*', async (req: Request, res: Response, next: NextFunction) => {
@@ -738,13 +748,34 @@ export async function createApp() {
         image = article.seo?.socialImage || article.image?.url || image;
       }
 
+      // /category/:categorySlug (audit NAV-01's destination): unlike the
+      // fixed list above, this route's validity depends on per-request
+      // data -- a real category exists, or it doesn't -- so it needs its
+      // own Supabase lookup rather than a static allowlist entry, the
+      // same reasoning getArticleBySlugServer already applies to article
+      // slugs above.
+      const pathSegments = urlPath.split('/').filter(Boolean);
+      const isCategoryRoutePattern = pathSegments[0] === 'category' && pathSegments.length === 2;
+      let categoryName: string | null = null;
+      if (isCategoryRoutePattern) {
+        categoryName = await getCategoryByNameSlugServer(pathSegments[1]);
+        if (categoryName) {
+          title = categoryName;
+          description = `Every published ${categoryName} story from THE RESERVE, newest first.`;
+        }
+      }
+      const isValidCategoryRoute = isCategoryRoutePattern && Boolean(categoryName);
+
       let template = fs.readFileSync(templatePath, 'utf-8');
       if (viteInstance) template = await viteInstance.transformIndexHtml(req.originalUrl, template);
 
-      // A route 404s only when it is neither an article nor one of the
-      // known static pages above -- e.g. a typo'd URL or a page (like
-      // /archive) that was never registered in the client router either.
-      const unknownRoute = Boolean(slug && !isArticle && !isKnownStaticPage);
+      // A route 404s only when it is none of: an article, one of the known
+      // static pages above, or a real category listing -- e.g. a typo'd
+      // URL, a page (like a nonexistent /category/not-a-real-category)
+      // that matches no real data, or a path (like the old /archive
+      // before this fix) that was never registered in the client router
+      // either.
+      const unknownRoute = Boolean(slug && !isArticle && !isKnownStaticPage && !isValidCategoryRoute);
       template = renderMetadata(template, {
         baseUrl: getBaseUrl(req),
         canonicalPath: isArticle ? `/${article.slug}` : urlPath === '/' ? '/' : urlPath,

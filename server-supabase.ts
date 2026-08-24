@@ -11,6 +11,10 @@
 // these read-only SSR lookups.
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { IncomingHttpHeaders } from 'http';
+// Pure, no other imports -- safe to pull into this server-only module the
+// same way src/lib/slug.ts is safe for server.ts itself. See that file's
+// header comment for why this isn't articleService.generateSlug instead.
+import { slugify } from './src/lib/slug';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
@@ -82,6 +86,46 @@ export async function getPublishedArticleSlugsServer(): Promise<string[]> {
       .filter((slug: unknown): slug is string => typeof slug === 'string' && slug.length > 0);
   } catch (error) {
     console.error('[Supabase SSR] getPublishedArticleSlugsServer failed:', error);
+    return [];
+  }
+}
+
+// Categories have no dedicated slug column (just { id, name }), so a
+// request for /category/:categorySlug is resolved by fetching every
+// category (a handful of rows -- there's no existing precedent for
+// needing a real WHERE-slug query on this small a table, same reasoning
+// as getPublishedArticleSlugsServer's plain unfiltered select above) and
+// matching slugify(name) against the URL param. Returns the real name
+// (for SSR title/canonical/description) or null if no category matches,
+// so the catch-all route below can tell "a real category" apart from a
+// typo'd URL and only 404 the latter.
+export async function getCategoryByNameSlugServer(categorySlug: string): Promise<string | null> {
+  const supabase = getServerSupabase();
+  if (!supabase) return null;
+
+  try {
+    const { data, error } = await supabase.from('categories').select('name');
+    if (error) throw error;
+    const match = (data ?? []).find((row: any) => typeof row.name === 'string' && slugify(row.name) === categorySlug);
+    return match?.name ?? null;
+  } catch (error) {
+    console.error('[Supabase SSR] getCategoryByNameSlugServer failed:', error);
+    return null;
+  }
+}
+
+export async function getAllCategoryNamesServer(): Promise<string[]> {
+  const supabase = getServerSupabase();
+  if (!supabase) return [];
+
+  try {
+    const { data, error } = await supabase.from('categories').select('name');
+    if (error) throw error;
+    return (data ?? [])
+      .map((row: any) => row.name)
+      .filter((name: unknown): name is string => typeof name === 'string' && name.length > 0);
+  } catch (error) {
+    console.error('[Supabase SSR] getAllCategoryNamesServer failed:', error);
     return [];
   }
 }

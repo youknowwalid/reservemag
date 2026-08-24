@@ -20,6 +20,8 @@ import EditorialPolicyPage from './pages/legal/EditorialPolicyPage';
 import AdvertisingPage from './pages/legal/AdvertisingPage';
 import LegalPage from './pages/legal/LegalPage';
 import EditorialBoardPage from './pages/EditorialBoardPage';
+import CategoryPage from './pages/CategoryPage';
+import ArchivePage from './pages/ArchivePage';
 import ContributorSignupPage from './pages/contribute/ContributorSignupPage';
 import ContributorVerifyEmailPage from './pages/contribute/ContributorVerifyEmailPage';
 import ContributorProfilePage from './pages/contribute/ContributorProfilePage';
@@ -246,6 +248,9 @@ export default function App() {
             <Route path="/legal" element={<LegalPage />} />
             {/* Unlike the three static pages above, this one's "Board Members" section is admin-managed and dynamic -- see EditorialBoardPage.tsx. */}
             <Route path="/editorial-board" element={<EditorialBoardPage />} />
+            {/* Real destinations for the homepage's "Explore All" buttons (CategorySection.tsx) and the footer/mobile-menu's "Digital Archive" / "Archive" links -- both previously pointed nowhere functional. */}
+            <Route path="/category/:categorySlug" element={<CategoryPage />} />
+            <Route path="/archive" element={<ArchivePage />} />
             <Route path="/:slug" element={<ArticlePage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

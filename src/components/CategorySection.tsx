@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { Article, Category } from '../types';
 import ResponsiveImage from './ui/ResponsiveImage';
 import { articleService } from '../services/articleService';
+import { slugify } from '../lib/slug';
 
 export interface CategorySectionProps {
   category: Category;
@@ -27,9 +28,13 @@ const CategorySection: React.FC<CategorySectionProps> = ({ category, articles })
             <span className="text-[11px] uppercase tracking-[0.4em] text-reserve-accent mb-2 block">Archive</span>
             <h3 className="text-4xl font-serif">{category}</h3>
           </div>
-          <button className="text-[11px] uppercase tracking-widest text-reserve-gray border-b border-transparent hover:border-reserve-accent transition-all">
+          {/* audit NAV-01: this was a plain <button> with no href/handler -- inert on every category section. */}
+          <Link
+            to={`/category/${slugify(category)}`}
+            className="text-[11px] uppercase tracking-widest text-reserve-gray border-b border-transparent hover:border-reserve-accent transition-all"
+          >
             Explore All
-          </button>
+          </Link>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">

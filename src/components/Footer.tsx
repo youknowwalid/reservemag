@@ -7,6 +7,11 @@ import { useSupabase } from '../context/SupabaseContext';
 // setting doesn't already override the label.
 const FOOTER_LABEL_FALLBACK_URLS: Record<string, string> = {
   'Become a Contributor': '/contribute',
+  // audit NAV-04: this label had no fallback here, so on any site where
+  // siteSettings.footerUrls doesn't override it, the link silently fell
+  // back to '/' (dead) via the `|| '/'` below -- despite /archive being
+  // the obviously-intended destination.
+  'Digital Archive': '/archive',
   'Privacy Policy': '/privacy-policy',
   'Terms of Service': '/terms-of-service',
   'Editorial Policy': '/editorial-policy',
