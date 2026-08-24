@@ -172,7 +172,15 @@ export default function ArticlePage() {
                     <div className="flex items-center gap-2 md:gap-4 border-t border-white/5 md:border-none pt-6 md:pt-0">
                       <div className="flex items-center gap-4 mr-4">
                         <Clock size={14} className="text-reserve-accent" />
-                        <span className="text-[10px] uppercase tracking-widest text-zinc-400">8 Min Read</span>
+                        {/* Was a hardcoded "8 Min Read" literal, independent of the
+                            article actually being viewed -- the same
+                            article.readTime the homepage card (ArticleCard.tsx)
+                            already renders is the single stored value (read_time
+                            column, set once per article at creation) both now
+                            consume, so they can no longer disagree (audit
+                            CONS-01: "3 min" on the card vs "8 Min Read" here for
+                            the same story). */}
+                        <span className="text-[10px] uppercase tracking-widest text-zinc-400">{article.readTime || '5 min'} Read</span>
                       </div>
                       <button className="p-3 text-zinc-500 hover:text-reserve-accent transition-colors hover:bg-white/5 rounded-full">
                         <Share2 size={20} />

@@ -6,7 +6,7 @@ import Footer from '../../components/Footer';
 import { useContributor } from '../../context/ContributorContext';
 import { resendConfirmationEmail, verifyContributorSignupOtp } from '../../lib/contributorAuth';
 import { resolveVerifyEmailPageRedirect } from '../../lib/contributorRouting';
-import { isValidOtpCode, OTP_MIN_LENGTH, OTP_MAX_LENGTH } from '../../lib/otpVerification';
+import { isValidOtpCode, describeOtpError, OTP_MIN_LENGTH, OTP_MAX_LENGTH } from '../../lib/otpVerification';
 
 interface LocationState {
   /** Passed by ContributorSignupPage right after a successful signUpContributor() call -- lets this page show/resend-to the right address even in the "no session issued yet" case (session-required project settings), where ContributorContext's `user` is still null until the code is actually verified. */
@@ -77,8 +77,10 @@ export default function ContributorVerifyEmailPage() {
     } catch (err: any) {
       // Deliberately does not clear `code` or navigate away -- the user
       // stays on this exact screen, with the email still shown, and can
-      // just retry without re-doing signup.
-      setError(err?.message || 'That code is invalid or expired. Please try again.');
+      // just retry without re-doing signup. describeOtpError translates
+      // Supabase's raw "Token has expired or is invalid" (dev/API
+      // language) into reader-facing copy (audit STATE-02).
+      setError(describeOtpError(err?.message));
     } finally {
       setVerifying(false);
     }
@@ -117,7 +119,7 @@ export default function ContributorVerifyEmailPage() {
             maxLength={OTP_MAX_LENGTH}
             value={code}
             onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, '').slice(0, OTP_MAX_LENGTH))}
-            className="w-full bg-black border border-white/10 p-4 text-center text-2xl tracking-[0.5em] outline-none focus:border-reserve-accent"
+            className="w-full bg-black border border-white/10 p-4 text-center text-2xl tracking-[0.5em] placeholder:tracking-normal outline-none focus:border-reserve-accent"
             placeholder="Verification code"
             aria-label="Verification code"
           />
