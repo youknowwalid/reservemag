@@ -101,7 +101,7 @@ export default function ContributorSignupPage() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-black border border-white/10 p-4 text-sm outline-none focus:border-reserve-accent"
+              className="w-full bg-black border border-white/10 p-4 text-base outline-none focus:border-reserve-accent"
               placeholder="you@example.com"
               required
             />
@@ -112,7 +112,7 @@ export default function ContributorSignupPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-black border border-white/10 p-4 text-sm outline-none focus:border-reserve-accent"
+              className="w-full bg-black border border-white/10 p-4 text-base outline-none focus:border-reserve-accent"
               placeholder={mode === 'signup' ? 'At least 8 characters' : ''}
               required
             />

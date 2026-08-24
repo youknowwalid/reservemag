@@ -26,7 +26,7 @@
 // logic verifyContributorSignupOtp() delegates to, not an approximation
 // of it, with Supabase's `verifyOtp` replaced by a fake.
 
-import { verifySignupOtp, isValidOtpCode, type VerifyOtpFn } from '../src/lib/otpVerification';
+import { verifySignupOtp, isValidOtpCode, describeOtpError, type VerifyOtpFn } from '../src/lib/otpVerification';
 
 let passed = 0;
 let failed = 0;
@@ -118,12 +118,42 @@ function testIsValidOtpCodeRejectsOutOfRangeOrNonNumeric() {
   assert(isValidOtpCode('12a456') === false, 'a non-digit character is rejected even at a valid length');
 }
 
+// audit STATE-02 -- describeOtpError() is what turns Supabase's raw,
+// developer-facing OTP error message into copy a signup reader should
+// actually see. verifySignupOtp() itself is intentionally left alone
+// (still throws the raw Supabase message, per
+// testInvalidCodePathThrowsSupabaseError above) -- the translation lives
+// here, one layer up, at the one place it's actually displayed.
+function testDescribeOtpErrorTranslatesSupabasesWrongOrExpiredCodeMessage() {
+  console.log('\n=== describeOtpError: Supabase\'s "Token has expired or is invalid" becomes reader-facing copy ===');
+  const result = describeOtpError('Token has expired or is invalid');
+  assert(result === "That code didn't match. Try again or resend.", 'the exact wrong/expired-code message Supabase sends is translated', result);
+  assert(!/token/i.test(result), 'the translated copy no longer contains developer language like "Token"', result);
+}
+
+function testDescribeOtpErrorIsCaseInsensitiveAndOrderIndependent() {
+  console.log('\n=== describeOtpError: matches regardless of case or word order ===');
+  assert(describeOtpError('token is invalid or expired') === "That code didn't match. Try again or resend.", 'lowercase, reordered wording still matches');
+  assert(describeOtpError('TOKEN EXPIRED') === "That code didn't match. Try again or resend.", 'all-caps still matches');
+}
+
+function testDescribeOtpErrorFallsBackForAnythingElse() {
+  console.log('\n=== describeOtpError: unrecognized/undefined messages get a generic reader-facing fallback, never Supabase\'s raw string ===');
+  const networkError = describeOtpError('Failed to fetch');
+  assert(networkError === 'Something went wrong verifying your code. Please try again.', 'a network-style error gets the generic fallback, not passed through raw', networkError);
+  const undefinedMessage = describeOtpError(undefined);
+  assert(undefinedMessage === 'Something went wrong verifying your code. Please try again.', 'an undefined message (e.g. a thrown non-Error) also gets the generic fallback', undefinedMessage);
+}
+
 async function main() {
   await testSuccessPathPassesCorrectTypeAndResolves();
   await testSuccessPathAlsoWorksForAnEightDigitCode();
   await testInvalidCodePathThrowsSupabaseError();
   testIsValidOtpCodeAcceptsTheWholeSupabaseRange();
   testIsValidOtpCodeRejectsOutOfRangeOrNonNumeric();
+  testDescribeOtpErrorTranslatesSupabasesWrongOrExpiredCodeMessage();
+  testDescribeOtpErrorIsCaseInsensitiveAndOrderIndependent();
+  testDescribeOtpErrorFallsBackForAnythingElse();
 
   console.log(`\n=== SUMMARY === ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

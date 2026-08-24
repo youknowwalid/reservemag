@@ -26,7 +26,8 @@
     "test:editorial-auth": "tsx --env-file-if-exists=.env scripts/test-editorial-auth-propagation.ts",
     "test:editorial-provider": "tsx scripts/test-editorial-provider-responses.ts",
     "test:subject-segmentation-fallback": "tsx scripts/test-subject-segmentation-fallback.ts",
-    "test:editorial-qa-originality": "tsx scripts/test-editorial-qa-originality.ts"
+    "test:editorial-qa-originality": "tsx scripts/test-editorial-qa-originality.ts",
+    "test:quick-wins-audit": "tsx scripts/test-quick-wins-audit.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1115.0",

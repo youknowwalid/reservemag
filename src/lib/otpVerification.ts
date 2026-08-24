@@ -45,3 +45,23 @@ export async function verifySignupOtp(verifyOtp: VerifyOtpFn, email: string, tok
   const { error } = await verifyOtp({ email, token, type: 'signup' });
   if (error) throw new Error(error.message);
 }
+
+/**
+ * Maps a raw Supabase OTP-verification error message to reader-facing copy
+ * for ContributorVerifyEmailPage to display (audit STATE-02). Supabase's
+ * own wording for a wrong or expired code -- "Token has expired or is
+ * invalid" -- is API/developer language ("Token") that means nothing to a
+ * contributor typing a code from an email; verifySignupOtp() above
+ * deliberately still throws that raw message unchanged (see
+ * scripts/test-contributor-otp-verify.ts), so the translation happens
+ * here, at the one place it's actually shown to a reader. Anything that
+ * isn't recognizably that specific error (e.g. a network failure) falls
+ * back to a generic reader-facing message rather than ever surfacing
+ * Supabase's raw string.
+ */
+export function describeOtpError(message: string | undefined): string {
+  if (message && /token/i.test(message) && /(expired|invalid)/i.test(message)) {
+    return "That code didn't match. Try again or resend.";
+  }
+  return 'Something went wrong verifying your code. Please try again.';
+}

@@ -53,9 +53,13 @@ export default function Hero({ article }: HeroProps) {
             <span className="text-[11px] text-reserve-gray uppercase tracking-widest">{article.date}</span>
           </div>
 
-          <h2 className="text-5xl md:text-8xl lg:text-9xl short:text-3xl short:md:text-4xl short:lg:text-5xl font-bold leading-[0.9] tracking-tighter mb-8 short:mb-3 text-reserve-text text-balance">
+          {/* The homepage's actual primary heading (audit A11Y-01) -- now
+              that Navbar's shared wordmark is a span, not an <h1>, this is
+              the only candidate on this page; a page with zero <h1>s is as
+              much an accessibility gap as a page with two. */}
+          <h1 className="text-5xl md:text-8xl lg:text-9xl short:text-3xl short:md:text-4xl short:lg:text-5xl font-bold leading-[0.9] tracking-tighter mb-8 short:mb-3 text-reserve-text text-balance">
             {article.title}
-          </h2>
+          </h1>
 
           <div className="flex flex-col md:flex-row md:items-center gap-8 md:gap-16">
             <p className="text-lg md:text-xl text-reserve-gray max-w-xl font-light leading-relaxed">

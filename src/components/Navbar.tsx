@@ -71,6 +71,32 @@ export default function Navbar() {
     return unsubscribe;
   }, []);
 
+  // Locks background scroll for the duration the full-screen mobile menu
+  // overlay is mounted (audit NAV-02) -- body's own base CSS only ever
+  // locks the x-axis (`overflow-x-hidden`, for the site's normal
+  // scroll-jank prevention), so without this the homepage feed underneath
+  // the overlay was still scrollable. Uses the position:fixed technique
+  // rather than plain `overflow-y: hidden` so it also freezes the
+  // *visual* scroll position (iOS Safari can still rubber-band a
+  // position:static body even with overflow hidden) and restores the
+  // exact scroll offset the page was at when the menu closes.
+  useEffect(() => {
+    if (!isMenuOpen) return;
+    const scrollY = window.scrollY;
+    const { overflow, position, top, width } = document.body.style;
+    document.body.style.overflow = 'hidden';
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = '100%';
+    return () => {
+      document.body.style.overflow = overflow;
+      document.body.style.position = position;
+      document.body.style.top = top;
+      document.body.style.width = width;
+      window.scrollTo(0, scrollY);
+    };
+  }, [isMenuOpen]);
+
   return (
     <>
       <nav
@@ -97,10 +123,29 @@ export default function Navbar() {
               />
             </div>
 
-            <Link to="/" className="md:absolute md:left-1/2 md:-translate-x-1/2 flex-shrink min-w-0">
-              <h1 className="text-lg sm:text-2xl md:text-4xl font-bold tracking-tighter text-reserve-text uppercase flex-shrink min-w-0 truncate">
+            {/* Site wordmark -- deliberately a styled span, not an <h1>: each
+                page's own primary heading (article title, category name,
+                etc.) is the page's one <h1>, and this renders on every page
+                via this shared header (audit A11Y-01). Still reachable by
+                screen readers as ordinary link text, just not announced as
+                a heading.
+
+                Centering + the jump to text-4xl are both deferred to lg
+                (1024px) rather than md (768px): at md, this became
+                absolutely centered (out of the left block's flex flow)
+                in the same breakpoint step that also jumped its font size
+                up, and in the ~768-900px band the container isn't yet wide
+                enough for that suddenly-wider centered logo to clear the
+                "Become a Contributor" link on the right (audit follow-up
+                to RESP-01/RESP-02). Below lg it stays a normal shrinkable
+                flex item (flex-shrink + min-w-0 + truncate all do
+                something there), so it can never overlap a flex sibling;
+                centering only turns on once the viewport is confirmed
+                wide enough to fit it (1024px+, already verified clean). */}
+            <Link to="/" className="lg:absolute lg:left-1/2 lg:-translate-x-1/2 flex-shrink min-w-0">
+              <span className="text-lg sm:text-2xl lg:text-3xl xl:text-4xl font-bold tracking-tighter text-reserve-text uppercase flex-shrink min-w-0 truncate block font-serif">
                 {siteSettings?.title || 'THE RESERVE'}<span className="text-reserve-accent">.</span>
-              </h1>
+              </span>
             </Link>
           </div>
 
@@ -125,7 +170,8 @@ export default function Navbar() {
             </Link>
             <button
               onClick={() => setIsMenuOpen(true)}
-              className="md:hidden text-reserve-text hover:text-reserve-accent transition-colors p-1.5 sm:p-2"
+              aria-label="Open menu"
+              className="md:hidden -mr-2.5 flex items-center justify-center w-11 h-11 text-reserve-text hover:text-reserve-accent transition-colors"
             >
               <Menu size={18} className="sm:w-5 sm:h-5" />
             </button>
