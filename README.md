@@ -183,6 +183,51 @@ The technology is intentionally treated as an invisible layer — the reader sho
 
 ---
 
+## Getting Started (Local Development)
+
+### Prerequisites
+
+- Node.js (v20 or later recommended)
+- A Supabase project (for `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`)
+
+### Setup
+
+```bash
+# Install dependencies
+npm install
+
+# Copy the environment template and fill in your own values
+cp .env.example .env
+```
+
+Configure the variables in `.env` as needed for the features you're working on — Supabase (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`), AI providers (`GEMINI_API_KEY`, `GEMINI_MODEL`, `TABITOKEN_API_KEY`, `TABITOKEN_BASE_URL`, `TABITOKEN_MODEL`), Cloudflare R2 storage (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_PUBLIC_BASE_URL`), and Instagram publishing (`IG_ACCESS_TOKEN`, `IG_BUSINESS_ACCOUNT_ID`, `IG_GRAPH_API_VERSION`). See `.env.example` for the full list.
+
+### Running locally
+
+```bash
+npm run dev
+```
+
+### Building for production
+
+```bash
+npm run build
+```
+
+### Tests
+
+The project ships a set of targeted scripts (see `package.json`) for exercising specific features, for example:
+
+```bash
+npm run test:listing-pages
+npm run test:server-routing
+npm run test:editorial-board
+```
+
+Run `npm run` with no arguments (or check `package.json`) for the full list of available `test:*` scripts.
+
+---
+
 ## Developer
 
 ### Walid Rahman Swapnil
