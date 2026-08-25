@@ -27,6 +27,7 @@
     "test:editorial-provider": "tsx scripts/test-editorial-provider-responses.ts",
     "test:subject-segmentation-fallback": "tsx scripts/test-subject-segmentation-fallback.ts",
     "test:editorial-qa-originality": "tsx scripts/test-editorial-qa-originality.ts",
+    "test:editorial-async-worker": "tsx scripts/test-editorial-async-worker.ts",
     "test:quick-wins-audit": "tsx scripts/test-quick-wins-audit.ts"
   },
   "dependencies": {
@@ -34,6 +35,7 @@
     "@google/genai": "latest",
     "@mediapipe/tasks-vision": "^1.0.1",
     "@supabase/supabase-js": "^2.45.0",
+    "@vercel/functions": "^3.9.5",
     "cheerio": "^1.2.0",
     "cors": "^2.8.5",
     "express": "^4.21.0",

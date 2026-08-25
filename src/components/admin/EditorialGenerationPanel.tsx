@@ -19,6 +19,17 @@ async function parseEditorialResponse(res: Response): Promise<{ ok: true; data: 
   }
 }
 
+/** Generation is asynchronous server-side -- these are the only two non-terminal statuses the status-poll endpoint can return; every other GenerationResult['status'] value is terminal. */
+const NON_TERMINAL_STATUSES = new Set(['PENDING', 'RUNNING']);
+
+/** How often the admin UI polls GET /api/admin/editorial/status/:id while a job is PENDING/RUNNING. This only ever reads job state -- it never triggers an AI request. */
+const STATUS_POLL_INTERVAL_MS = 4000;
+
+/** sessionStorage key for recovering an in-flight generation if the admin reloads/reopens this page -- scoped per factoryKind so Editorial Factory and News Factory (two mounts of this same component) never cross-recover each other's job. */
+function inFlightJobStorageKey(factoryKind: 'editorial' | 'news'): string {
+  return `reserve:editorial-factory:in-flight-job:${factoryKind}`;
+}
+
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return <div className="space-y-1"><span className="text-[9px] uppercase tracking-widest text-zinc-600 block">{label}</span><div className="text-zinc-300 text-xs leading-relaxed">{value ?? '--'}</div></div>;
 }
@@ -61,9 +72,87 @@ export default function EditorialGenerationPanel({ factoryKind = 'editorial' }: 
   const [publishedArticleId, setPublishedArticleId] = useState<string | null>(null);
   const [publishedSlug, setPublishedSlug] = useState<string | null>(null);
   const stepTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Guards against a poll response landing after the admin has already
+  // navigated away/unmounted, or after a newer generation superseded this
+  // one -- never call setState from a stale poll.
+  const pollGeneration = useRef(0);
 
-  useEffect(() => () => { if (stepTimer.current) clearInterval(stepTimer.current); }, []);
+  const stopPolling = () => { if (pollTimer.current) { clearInterval(pollTimer.current); pollTimer.current = null; } };
+  useEffect(() => () => { if (stepTimer.current) clearInterval(stepTimer.current); stopPolling(); }, []);
   const sourceUrls = [sourceUrl1, sourceUrl2, sourceUrl3].map((u) => u.trim()).filter(Boolean);
+
+  /** Applies a terminal (or, on error, a synthesized failure) result and stops all in-progress UI state. Shared by the poll loop and the recovery-on-mount path. */
+  const finishWithResult = (data: GenerationResult) => {
+    setResult(data);
+    if (data?.editorialPackage) setCover({ title: data.editorialPackage.title, coverKicker: data.editorialPackage.coverKicker, coverSecondaryLine: data.editorialPackage.coverSecondaryLine, imageUrl: data.editorialPackage.imageUrl, imageReason: data.editorialPackage.imageReason });
+    setStep(6);
+    setGenerating(false);
+    if (stepTimer.current) clearInterval(stepTimer.current);
+    stopPolling();
+    sessionStorage.removeItem(inFlightJobStorageKey(factoryKind));
+  };
+
+  /** Polls GET /api/admin/editorial/status/:id on an interval until the job reaches a terminal status. NEVER makes an AI request -- purely reads job state. Used both right after submitting a new generation and to resume watching a job recovered from sessionStorage on mount. */
+  const pollStatus = (id: string, accessToken: string) => {
+    const myGeneration = ++pollGeneration.current;
+    stopPolling();
+    pollTimer.current = setInterval(async () => {
+      if (pollGeneration.current !== myGeneration) return stopPolling();
+      try {
+        const res = await fetch(`/api/admin/editorial/status/${id}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+        const parsed = await parseEditorialResponse(res);
+        if (parsed.ok === false) throw new Error(parsed.message);
+        const data = parsed.data;
+        if (!res.ok) throw new Error(data?.error || 'Failed to check editorial generation status.');
+        if (pollGeneration.current !== myGeneration) return;
+        if (NON_TERMINAL_STATUSES.has(data.status)) {
+          setStep((s) => (s < 5 ? s + 1 : s));
+          return;
+        }
+        finishWithResult(data);
+      } catch (err: any) {
+        if (pollGeneration.current !== myGeneration) return;
+        setError(err?.message || 'Failed to check editorial generation status.');
+        setStep(0); setGenerating(false);
+        if (stepTimer.current) clearInterval(stepTimer.current);
+        stopPolling();
+        sessionStorage.removeItem(inFlightJobStorageKey(factoryKind));
+      }
+    }, STATUS_POLL_INTERVAL_MS);
+  };
+
+  // Recover an in-flight job on mount (e.g. the admin reloaded the page or
+  // came back to this tab mid-generation) -- reads the job's current
+  // status from the database and resumes polling if it's not terminal
+  // yet. Never starts a new AI request; if the recovered job already
+  // finished (or was reclaimed as stale) while the admin was away, this
+  // just shows the result immediately.
+  useEffect(() => {
+    const stored = sessionStorage.getItem(inFlightJobStorageKey(factoryKind));
+    if (!stored) return;
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) { sessionStorage.removeItem(inFlightJobStorageKey(factoryKind)); return; }
+      try {
+        const res = await fetch(`/api/admin/editorial/status/${stored}`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+        const parsed = await parseEditorialResponse(res);
+        if (parsed.ok === false || !res.ok) { sessionStorage.removeItem(inFlightJobStorageKey(factoryKind)); return; }
+        const data = parsed.data;
+        if (NON_TERMINAL_STATUSES.has(data.status)) {
+          setGenerating(true); setStep(1);
+          pollStatus(stored, session.access_token);
+        } else {
+          finishWithResult(data);
+        }
+      } catch {
+        // Recovery is best-effort -- if it fails, the admin just starts a fresh generation as normal.
+        sessionStorage.removeItem(inFlightJobStorageKey(factoryKind));
+      }
+    })();
+    // Runs once per mount only -- factoryKind is stable for the lifetime of a given AdminPanel nav entry.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const runGeneration = async () => {
     setShowConfirm(false); setGenerating(true); setError(null); setPublishError(null); setResult(null); setCover(null); setPublishedArticleId(null); setPublishedSlug(null); setStep(1);
@@ -76,12 +165,14 @@ export default function EditorialGenerationPanel({ factoryKind = 'editorial' }: 
       // `parsed.ok === false` (not `!parsed.ok`) so the discriminated union narrows correctly under this project's non-strict tsconfig.
       if (parsed.ok === false) throw new Error(parsed.message);
       const data = parsed.data;
-      if (!res.ok && !data?.status) throw new Error(data?.error || 'Editorial generation failed.');
-      setResult(data);
-      if (data?.editorialPackage) setCover({ title: data.editorialPackage.title, coverKicker: data.editorialPackage.coverKicker, coverSecondaryLine: data.editorialPackage.coverSecondaryLine, imageUrl: data.editorialPackage.imageUrl, imageReason: data.editorialPackage.imageReason });
-      setStep(6);
-    } catch (err: any) { setError(err?.message || 'Editorial generation failed.'); setStep(0); }
-    finally { if (stepTimer.current) clearInterval(stepTimer.current); setGenerating(false); }
+      // 202 { id, status: 'PENDING' } is the only success shape now -- generation happens in a separate background worker invocation (see server.ts). A non-202 response here means the job was rejected before ever being queued (e.g. 409 duplicate-in-progress, 400 validation).
+      if (!res.ok || !data?.id) throw new Error(data?.error || 'Editorial generation failed.');
+      sessionStorage.setItem(inFlightJobStorageKey(factoryKind), data.id);
+      pollStatus(data.id, session.access_token);
+    } catch (err: any) {
+      setError(err?.message || 'Editorial generation failed.'); setStep(0); setGenerating(false);
+      if (stepTimer.current) clearInterval(stepTimer.current);
+    }
   };
 
   const handleGenerateClick = (e: React.FormEvent) => { e.preventDefault(); if (!sourceUrls.length) { setError('At least one source URL is required.'); return; } setError(null); setShowConfirm(true); };

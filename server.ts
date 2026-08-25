@@ -42,6 +42,13 @@ import { retrieveSource, safeFetchImage } from './src/services/research/sourceRe
 import { generateEditorialPackage, resolveGenerationTimeoutMs, getConfiguredEditorialModel } from './src/services/editorial/editorialGenerationService';
 import { validateGenerationRequestBody } from './src/services/editorial/editorialRequestGuard';
 import { computeEditorialFingerprint, createSupabaseEditorialJobLockStore } from './src/services/editorial/editorialJobLock';
+import type { EditorialGenerationProgressEvent } from './src/services/editorial/editorialTypes';
+// Extends this invocation's lifetime just long enough to guarantee the
+// fire-and-forget trigger fetch to /_worker is actually dispatched before
+// Vercel can freeze/recycle it -- NOT used (and not usable) to run the
+// worker's own slow work in the background of this same invocation. See
+// the /api/admin/editorial/generate route's comment for the full reasoning.
+import { waitUntil } from '@vercel/functions';
 // Instagram Graph API client. Server-side only -- see
 // src/services/instagramGraphService.ts. Publishes a banner already
 // uploaded to Supabase Storage's public `media` bucket to THE RESERVE's
@@ -76,6 +83,46 @@ function stripHtml(value: unknown, maxLength = 160): string {
 function absoluteUrl(baseUrl: string, value: string): string {
   if (/^https?:\/\//i.test(value)) return value;
   return `${baseUrl}${value.startsWith('/') ? '' : '/'}${value}`;
+}
+
+/** Maps one EditorialGenerationProgressEvent to the editorial_generations column patch it should persist. Pure/no I/O -- the caller does the actual write. */
+function progressEventToPatch(event: EditorialGenerationProgressEvent): Record<string, unknown> {
+  switch (event.phase) {
+    case 'SOURCE_RETRIEVAL_STARTED':
+      return { source_retrieval_started_at: event.at };
+    case 'SOURCE_RETRIEVAL_COMPLETED':
+      return { source_retrieval_completed_at: event.at };
+    case 'AI_REQUEST_STARTED':
+      return { ai_request_started_at: event.at };
+    case 'AI_REQUEST_COMPLETED':
+      return {
+        ai_request_completed_at: event.at,
+        provider_http_status: event.providerHttpStatus ?? null,
+        provider_error_code: event.providerErrorCode ?? null,
+      };
+    default:
+      return {};
+  }
+}
+
+/** Maps a raw `editorial_generations` row to the same shape the admin UI already expects from a completed generation (see GenerationResult in EditorialGenerationPanel.tsx). Used by both /generate's old-shaped response expectations and the new status-poll route. */
+function editorialRowToStatusResponse(row: Record<string, any>) {
+  return {
+    id: row.id,
+    status: row.generation_status,
+    failureReason: row.failure_reason ?? null,
+    sources: row.sources_used ?? [],
+    editorialPackage: row.editorial_package ?? null,
+    qa: row.qa_result ?? null,
+    requestedModel: row.requested_model ?? null,
+    servedModel: row.served_model ?? null,
+    usage: {
+      promptTokens: row.prompt_tokens ?? null,
+      completionTokens: row.completion_tokens ?? null,
+      totalTokens: row.total_tokens ?? null,
+    },
+    latencyMs: row.latency_ms ?? null,
+  };
 }
 
 function getBaseUrl(req: Request): string {
@@ -602,6 +649,37 @@ export async function createApp() {
   // refuses to run unless the caller explicitly passes `confirmed: true`
   // -- defense in depth against a stray or accidental request triggering
   // a paid generation.
+  //
+  // ASYNC ARCHITECTURE (2026-08-26): this route used to run source
+  // retrieval + the AI call + validation/QA inline and return the
+  // finished package in the same HTTP response. A "thinking" model
+  // generation can legitimately take up to EDITORIAL_GENERATION_TIMEOUT_MS
+  // (240s) -- see editorialGenerationService.ts's own comment on why that
+  // default is that high -- and this project's confirmed Vercel plan is
+  // Hobby, whose function execution ceiling is well under that even with
+  // `maxDuration` configured. A slow generation was therefore at risk of
+  // the platform killing the function mid-request, which produces a raw,
+  // non-JSON platform error page -- exactly the generic "server
+  // encountered an unexpected error" the admin UI showed, and NOT
+  // something this route's own try/catch could ever see or log (see the
+  // investigation report this fix responds to).
+  //
+  // This route now only does the fast part -- validate, dedupe-lock,
+  // return -- and dispatches the slow part (markRunning + the actual AI
+  // call + validation/QA + persisting the terminal state) to a SEPARATE
+  // function invocation (`POST .../_worker`, below) via a same-origin,
+  // fire-and-forget fetch. That is the only way to give the slow part its
+  // own fresh execution-time budget: `waitUntil()` (used only to make sure
+  // the trigger fetch is actually dispatched before this invocation can be
+  // frozen) explicitly does NOT extend past THIS invocation's own
+  // maxDuration -- it cannot be used to run the AI call itself in the
+  // background of this same request.
+  //
+  // Exactly one AI request per job is still guaranteed: the worker only
+  // proceeds past a conditional PENDING -> RUNNING claim (see
+  // editorialJobLock.ts's markRunning), the dedupe lock/fingerprint
+  // mechanism below is completely unchanged, and nothing in this file
+  // triggers the worker more than once per successful tryAcquire.
   app.post('/api/admin/editorial/generate', async (req, res) => {
     const auth = await verifyAdminRequest(req);
     if (auth.ok === false) return res.status(auth.status).json({ error: auth.error });
@@ -658,14 +736,98 @@ export async function createApp() {
       return res.status(500).json({ error: 'Failed to start editorial generation.' });
     }
 
+    // Dispatch the slow part to its own invocation. `waitUntil` here only
+    // needs to keep THIS invocation alive long enough for the outbound
+    // fetch to actually be sent -- not for the worker to finish -- so this
+    // stays fast regardless of how long the generation itself takes. The
+    // worker re-verifies the SAME bearer token (forwarded as-is) via its
+    // own verifyAdminRequest() call, so RLS/is_admin() is enforced exactly
+    // as it always was; no service-role, no weakened auth.
+    const authorizationHeader = req.headers['authorization'] as string;
+    const workerUrl = `${getBaseUrl(req)}/api/admin/editorial/_worker`;
+    waitUntil(
+      fetch(workerUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: authorizationHeader },
+        body: JSON.stringify({ lockId, input }),
+      }).catch((dispatchError) => {
+        // If even the trigger fetch fails to go out, the job is left
+        // PENDING -- not silently lost: the existing stale-reclaim logic
+        // (above, and in the status route below) will mark it
+        // GENERATION_FAILED/TIMEOUT once EDITORIAL_GENERATION_TIMEOUT_MS
+        // elapses, same as any other abandoned job.
+        console.error('[Editorial Generation] Failed to dispatch background worker (job left PENDING; will be reclaimed as stale if abandoned):', dispatchError);
+      }),
+    );
+
+    return res.status(202).json({ id: lockId, status: 'PENDING' });
+  });
+
+  // Internal worker: performs the actual source retrieval + AI generation
+  // + validation/QA + terminal persistence for one already-locked job.
+  // Not called by the browser directly -- only by the trigger fetch above,
+  // which forwards the original admin's bearer token, so this is gated by
+  // the exact same verifyAdminRequest()/RLS check as every other
+  // admin-editorial route. Runs as its own Vercel function invocation with
+  // its own fresh execution-time budget (see the /generate route's
+  // comment above for why that's the whole point).
+  app.post('/api/admin/editorial/_worker', async (req, res) => {
+    const auth = await verifyAdminRequest(req);
+    if (auth.ok === false) return res.status(auth.status).json({ error: auth.error });
+
+    const { lockId, input } = (req.body || {}) as { lockId?: unknown; input?: unknown };
+    if (typeof lockId !== 'string' || !lockId) {
+      return res.status(400).json({ error: 'Missing lockId.' });
+    }
+
+    const editorialJobLockStore = createSupabaseEditorialJobLockStore(auth.client);
+
+    // Cost-safety guard: markRunning only succeeds if this job is still
+    // PENDING (a conditional UPDATE at the database layer, not just an
+    // in-process check -- see editorialJobLock.ts). If it's already
+    // RUNNING or terminal, this worker invocation stops here WITHOUT ever
+    // calling the AI provider. In this architecture the worker is only
+    // ever triggered once per successful tryAcquire, so this should always
+    // succeed in normal operation -- this is defense in depth, not a
+    // mechanism this design relies on to prevent duplicate spend.
+    let claimed: boolean;
     try {
-      await editorialJobLockStore.markRunning(lockId);
+      const claim = await editorialJobLockStore.markRunning(lockId);
+      claimed = claim.claimed;
     } catch (runningError) {
-      console.error('[Editorial Generation] Failed to mark job RUNNING (continuing anyway):', runningError);
+      console.error('[Editorial Generation Worker] Failed to claim job (treating as not claimed; no AI request will be made):', runningError);
+      claimed = false;
+    }
+    if (!claimed) {
+      console.warn(`[Editorial Generation Worker] Job ${lockId} was not PENDING when claimed -- skipping without making an AI request.`);
+      return res.status(200).json({ id: lockId, skipped: true });
+    }
+
+    if (typeof input !== 'object' || input === null) {
+      try {
+        await editorialJobLockStore.markTerminal(lockId, {
+          generation_status: 'GENERATION_FAILED',
+          error_category: 'UNKNOWN',
+          failure_reason: 'Worker invocation was missing its generation input.',
+          ai_request_attempted: false,
+        });
+      } catch (dbError) {
+        console.error('[Editorial Generation Worker] Failed to persist missing-input failure state:', dbError);
+      }
+      return res.status(400).json({ error: 'Missing generation input.' });
     }
 
     try {
-      const result = await generateEditorialPackage(input);
+      const result = await generateEditorialPackage(input as Parameters<typeof generateEditorialPackage>[0], {
+        onProgress: async (event) => {
+          try {
+            await editorialJobLockStore.updateProgress(lockId, progressEventToPatch(event));
+          } catch (progressError) {
+            // Observability only -- must never abort the generation itself.
+            console.error('[Editorial Generation Worker] Failed to persist a progress checkpoint (non-fatal):', progressError);
+          }
+        },
+      });
 
       try {
         await editorialJobLockStore.markTerminal(lockId, {
@@ -685,13 +847,12 @@ export async function createApp() {
           latency_ms: result.latencyMs,
         });
       } catch (dbError) {
-        console.error('[Editorial Generation] Failed to persist final generation state:', dbError);
+        console.error('[Editorial Generation Worker] Failed to persist final generation state:', dbError);
       }
 
-      const httpStatus = result.status === 'SUCCESS' ? 200 : 502;
-      return res.status(httpStatus).json({ id: lockId, ...result });
+      return res.status(200).json({ id: lockId, ...result });
     } catch (error: any) {
-      console.error('[Editorial Generation] CRITICAL EXCEPTION:', error);
+      console.error('[Editorial Generation Worker] CRITICAL EXCEPTION:', error);
       try {
         await editorialJobLockStore.markTerminal(lockId, {
           generation_status: 'GENERATION_FAILED',
@@ -699,10 +860,42 @@ export async function createApp() {
           failure_reason: 'Editorial generation failed unexpectedly.',
         });
       } catch (dbError) {
-        console.error('[Editorial Generation] Failed to persist crash state:', dbError);
+        console.error('[Editorial Generation Worker] Failed to persist crash state:', dbError);
       }
       return res.status(500).json({ error: 'Editorial generation failed unexpectedly.' });
     }
+  });
+
+  // Read-only status poll for an in-flight or completed generation job.
+  // The admin UI calls this on an interval after /generate returns 202,
+  // and also once on mount to recover an in-flight job after a page
+  // reload/reopen (see EditorialGenerationPanel.tsx). NEVER calls the AI
+  // provider -- purely reads (and, opportunistically, reclaims a stale
+  // row via the exact same reclaimStale() used before every new
+  // tryAcquire) the editorial_generations row.
+  app.get('/api/admin/editorial/status/:id', async (req, res) => {
+    const auth = await verifyAdminRequest(req);
+    if (auth.ok === false) return res.status(auth.status).json({ error: auth.error });
+
+    const { id } = req.params;
+    const { data: row, error } = await auth.client.from('editorial_generations').select('*').eq('id', id).single();
+    if (error || !row) return res.status(404).json({ error: 'Generation job not found.' });
+
+    if ((row.generation_status === 'PENDING' || row.generation_status === 'RUNNING') && row.created_at) {
+      const staleBeforeIso = new Date(Date.now() - (resolveGenerationTimeoutMs() + 60_000)).toISOString();
+      if (row.created_at < staleBeforeIso) {
+        const editorialJobLockStore = createSupabaseEditorialJobLockStore(auth.client);
+        try {
+          await editorialJobLockStore.reclaimStale(row.request_fingerprint, staleBeforeIso);
+          const refreshed = await auth.client.from('editorial_generations').select('*').eq('id', id).single();
+          if (refreshed.data) return res.status(200).json(editorialRowToStatusResponse(refreshed.data));
+        } catch (reclaimError) {
+          console.error('[Editorial Generation Status] Stale reclaim failed (non-fatal):', reclaimError);
+        }
+      }
+    }
+
+    return res.status(200).json(editorialRowToStatusResponse(row));
   });
 
   if (isProd) {

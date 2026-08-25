@@ -155,6 +155,25 @@ export interface RetrievedSourceSummary {
   wordCount: number;
 }
 
+/**
+ * Per-phase progress checkpoint emitted during one generation run, for
+ * observability only -- never used for control flow. Consumed by
+ * `EditorialGenerationDeps.onProgress` (see editorialGenerationService.ts)
+ * and persisted by the caller (the `_worker` route in server.ts) onto the
+ * `editorial_generations` row as it happens, not just at the end -- so a
+ * generation that never reaches a terminal state (e.g. the platform kills
+ * the function mid-request) still leaves a partial, diagnosable trail
+ * (which phase it reached, and when) instead of a silent gap.
+ */
+export interface EditorialGenerationProgressEvent {
+  phase: 'SOURCE_RETRIEVAL_STARTED' | 'SOURCE_RETRIEVAL_COMPLETED' | 'AI_REQUEST_STARTED' | 'AI_REQUEST_COMPLETED';
+  at: string;
+  /** Only present for AI_REQUEST_COMPLETED. */
+  providerHttpStatus?: number | null;
+  /** Only present for AI_REQUEST_COMPLETED. */
+  providerErrorCode?: string | null;
+}
+
 export interface EditorialGenerationResult {
   status: EditorialGenerationStatus;
   failureReason: string | null;
