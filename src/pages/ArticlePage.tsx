@@ -198,24 +198,69 @@ export default function ArticlePage() {
                     transition={{ duration: 1.2, ease: "easeOut" }}
                     className="relative group overflow-hidden bg-zinc-950 rounded-sm shadow-2xl"
                   >
-                    <picture className="block w-full">
-                      {article.mobileImage?.url && (
-                        <source media="(max-width: 768px)" srcSet={article.mobileImage.url} />
-                      )}
-                      <img 
-                        src={article.image?.url || undefined} 
-                        className={`w-full h-full object-cover transition-transform duration-[4s] group-hover:scale-105 grayscale hover:grayscale-0 ${
-                          article.mobileImage?.url 
-                            ? 'aspect-[4/5] md:aspect-[21/9]' 
-                            : 'aspect-[4/5] object-contain md:aspect-[21/9] md:object-cover'
-                        }`} 
-                        style={{ 
-                          objectPosition: `${article.mobileCropX || 50}% 50%`
+                    {/* Desktop and mobile each get their own <img> (rather
+                        than one <img> under a <picture><source>) so their
+                        focal point/zoom can differ independently -- the
+                        prior single-image approach meant mobileCropX
+                        silently also drove the desktop crop whenever the
+                        mobile <source> didn't match. Each is hidden via CSS
+                        at the breakpoint it doesn't own (hidden/md:block and
+                        md:hidden) rather than swapped by the browser, so
+                        both can carry their own inline transform/
+                        object-position without fighting over one style.
+
+                        The configured zoom and the pre-existing hover-zoom
+                        (group-hover:scale-105) both need to drive the same
+                        `transform`, and an inline style always wins over a
+                        Tailwind utility class for the same CSS property --
+                        so a literal inline `transform: scale(zoom)` would
+                        silently kill the hover effect. Instead both are
+                        folded into one calc() reading two CSS custom
+                        properties: --hero-zoom (the configured value, set
+                        inline per-image) and --hero-hover-zoom (1 normally,
+                        1.05 on hover, toggled by the group-hover:[...]
+                        utility below) -- so the hover animation and the
+                        admin's zoom setting compose instead of one
+                        overriding the other. */}
+                    {article.mobileImage?.url ? (
+                      <img
+                        src={article.mobileImage.url}
+                        className="block md:hidden w-full h-full object-cover transition-transform duration-[4s] group-hover:[--hero-hover-zoom:1.05] grayscale hover:grayscale-0 aspect-[4/5]"
+                        style={{
+                          objectPosition: `${article.mobileCropX ?? 50}% ${article.mobileCropY ?? 50}%`,
+                          transform: 'scale(calc(var(--hero-zoom, 1) * var(--hero-hover-zoom, 1)))',
+                          transformOrigin: `${article.mobileCropX ?? 50}% ${article.mobileCropY ?? 50}%`,
+                          ...({ '--hero-zoom': (article.mobileZoom ?? 100) / 100 } as React.CSSProperties),
                         }}
                         alt={article.title}
                         referrerPolicy="no-referrer"
                       />
-                    </picture>
+                    ) : (
+                      <img
+                        src={article.image?.url || undefined}
+                        className="block md:hidden w-full h-full object-contain transition-transform duration-[4s] group-hover:[--hero-hover-zoom:1.05] grayscale hover:grayscale-0 aspect-[4/5]"
+                        style={{
+                          objectPosition: `${article.mobileCropX ?? 50}% ${article.mobileCropY ?? 50}%`,
+                          transform: 'scale(calc(var(--hero-zoom, 1) * var(--hero-hover-zoom, 1)))',
+                          transformOrigin: `${article.mobileCropX ?? 50}% ${article.mobileCropY ?? 50}%`,
+                          ...({ '--hero-zoom': (article.mobileZoom ?? 100) / 100 } as React.CSSProperties),
+                        }}
+                        alt={article.title}
+                        referrerPolicy="no-referrer"
+                      />
+                    )}
+                    <img
+                      src={article.image?.url || undefined}
+                      className="hidden md:block w-full h-full object-cover transition-transform duration-[4s] group-hover:[--hero-hover-zoom:1.05] grayscale hover:grayscale-0 aspect-[21/9]"
+                      style={{
+                        objectPosition: `${article.desktopCropX ?? 50}% ${article.desktopCropY ?? 50}%`,
+                        transform: 'scale(calc(var(--hero-zoom, 1) * var(--hero-hover-zoom, 1)))',
+                        transformOrigin: `${article.desktopCropX ?? 50}% ${article.desktopCropY ?? 50}%`,
+                        ...({ '--hero-zoom': (article.desktopZoom ?? 100) / 100 } as React.CSSProperties),
+                      }}
+                      alt={article.title}
+                      referrerPolicy="no-referrer"
+                    />
 
                     {/* Fallback blurred background for centered portrait images if no mobile image */}
                     {!article.mobileImage?.url && (

@@ -13,6 +13,7 @@
     "test:editorial-cost-safety": "tsx scripts/test-editorial-cost-safety.ts",
     "test:r2-banner-upload": "tsx scripts/test-r2-banner-upload.ts",
     "test:news-banner-template": "tsx scripts/test-news-banner-template.ts",
+    "test:focal-point-zoom": "tsx scripts/test-focal-point-zoom.ts",
     "test:contributor-signup": "tsx scripts/test-contributor-signup.ts",
     "test:contributor-sign-out": "tsx scripts/test-contributor-sign-out.ts",
     "test:editorial-board": "tsx scripts/test-editorial-board.ts",

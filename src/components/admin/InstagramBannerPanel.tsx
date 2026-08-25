@@ -93,6 +93,8 @@ interface SavedBannerConfig {
   imageUrl: string;
   focalX: number;
   focalY: number;
+  /** 100-200. Optional so a banner saved before zoom existed still loads fine (falls back to 100 -- see the restore effect). */
+  zoom?: number;
   overrides: Required<InstagramBannerOverrides>;
 }
 
@@ -226,6 +228,10 @@ export default function InstagramBannerPanel({
   // rarely makes sense on a different one.
   const [focalX, setFocalX] = useState(50);
   const [focalY, setFocalY] = useState(50);
+  // 100-200, same units/semantics as FocalPointEditor's zoom slider.
+  // Reset alongside focalX/focalY whenever the image URL changes, for the
+  // same reason: a zoom level picked for one photo rarely fits another.
+  const [zoom, setZoom] = useState(100);
   const [creditLine, setCreditLine] = useState(() => {
     const publisher = sources.find((s) => s.status === 'SUCCESS')?.publisher;
     if (defaultTemplate === 'news') return publisher ? `Source: ${publisher}` : 'Source: THE RESERVE';
@@ -311,6 +317,7 @@ export default function InstagramBannerPanel({
         setImageUrl(saved.imageUrl ?? imageUrl);
         setFocalX(saved.focalX ?? 50);
         setFocalY(saved.focalY ?? 50);
+        setZoom(saved.zoom ?? 100);
         setOverrides(saved.overrides ?? DEFAULT_OVERRIDES);
         setLoadedSavedConfig(true);
       }
@@ -338,6 +345,7 @@ export default function InstagramBannerPanel({
       creditLine,
       focalX,
       focalY,
+      zoom,
       overrides,
       subjectCutout: subjectCutoutRef.current,
     });
@@ -405,7 +413,7 @@ export default function InstagramBannerPanel({
     if (!hasPreview || !objectUrlRef.current) return;
     renderFromSrc(objectUrlRef.current).catch((err) => setError(err?.message || 'Failed to update the preview.'));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- renderFromSrc closes over the latest state already; re-running on those same state changes is the point
-  }, [template, kicker, subtitle, headline, emphasisPhrase, newsLayout, creditLine, focalX, focalY, overrides, hasPreview]);
+  }, [template, kicker, subtitle, headline, emphasisPhrase, newsLayout, creditLine, focalX, focalY, zoom, overrides, hasPreview]);
 
   const downloadPng = async () => {
     const canvas = canvasRef.current;
@@ -441,7 +449,7 @@ export default function InstagramBannerPanel({
       const publicUrl = await bannerUploadService.uploadRenderedBanner(blob, recordId);
 
       if (recordId) {
-        const config: SavedBannerConfig = { template, kicker, subtitle, headline, emphasisPhrase, newsLayout, creditLine, imageUrl, focalX, focalY, overrides };
+        const config: SavedBannerConfig = { template, kicker, subtitle, headline, emphasisPhrase, newsLayout, creditLine, imageUrl, focalX, focalY, zoom, overrides };
         const { error: dbError } = await supabase
           .from(recordTable)
           .update({ instagram_banner_url: publicUrl, instagram_banner_config: config })
@@ -601,6 +609,7 @@ export default function InstagramBannerPanel({
                 setImageUrl(e.target.value);
                 setFocalX(50);
                 setFocalY(50);
+                setZoom(100);
               }}
               placeholder="https://..."
             />
@@ -796,9 +805,12 @@ export default function InstagramBannerPanel({
           own preview uses the image URL directly (a plain <img> can
           display a cross-origin image fine -- only canvas export needs
           the proxy), so it gives instant feedback without waiting on a
-          fetch. Once a preview has been rendered, focal-point changes
-          also live-update the actual canvas above (see the effect
-          above). */}
+          fetch. Once a preview has been rendered, focal-point/zoom
+          changes also live-update the actual canvas above (see the
+          effect above). targetWidth/targetHeight (the same fixed pixel
+          box computeCoverFit renders into) are passed through so the
+          editor can warn if the current zoom would upscale a
+          lower-resolution source photo. */}
       {imageUrl.trim() && (
         <div className="pt-6 border-t border-white/5">
           <FocalPointEditor
@@ -811,8 +823,12 @@ export default function InstagramBannerPanel({
               setFocalX(x);
               setFocalY(y);
             }}
+            zoom={zoom}
+            onZoomChange={setZoom}
+            targetWidth={template === 'news' ? NEWS_PHOTO_BOX.width : BANNER_WIDTH}
+            targetHeight={template === 'news' ? NEWS_PHOTO_BOX.height : BANNER_HEIGHT}
             title="Banner Focal Point"
-            helpText={template === 'news' ? 'Define the focal point for the photo box.' : "Define the focal point for the banner's fixed frame."}
+            helpText={template === 'news' ? 'Define the focal point and zoom for the photo box.' : "Define the focal point and zoom for the banner's fixed frame."}
           />
         </div>
       )}

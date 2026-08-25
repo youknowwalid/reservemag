@@ -140,6 +140,8 @@ export interface InstagramBannerParams {
   /** Cover-fit focal point, 0-100 per axis (same semantics as CSS object-position -- 50/50 is centered, matching the article editor's crop tool). Defaults to 50/50 when omitted. */
   focalX?: number;
   focalY?: number;
+  /** 100-200 (percent, same units as FocalPointEditor's zoom slider). Multiplies the cover-fit scale computed around focalX/focalY -- see computeCoverFit's zoomMultiplier param. Defaults to 100 (no zoom) when omitted. */
+  zoom?: number;
   /** Manual per-element font-size/position/color adjustments -- see ElementOverride. Never applies to the editorial masthead, which stays auto-fixed. */
   overrides?: InstagramBannerOverrides;
   /**
@@ -352,9 +354,16 @@ export interface CoverFit {
  * Pure and canvas-free (just arithmetic), so it's exported for direct
  * unit testing (scripts/test-news-banner-template.ts) alongside
  * tokenizeWithEmphasis below.
+ *
+ * `zoomMultiplier` (default 1 = no zoom, i.e. exactly the prior
+ * behavior) scales the cover-fit result further around the same focal
+ * point -- pass e.g. 1.5 for a 150% zoom. It's a plain multiplier here
+ * (not the 100-200 percent used by FocalPointEditor's zoom prop/params.zoom
+ * above) so this stays simple arithmetic independent of any UI's units;
+ * callers convert (params.zoom ?? 100) / 100 before calling in.
  */
-export function computeCoverFit(imgW: number, imgH: number, destW: number, destH: number, focalX: number, focalY: number): CoverFit {
-  const scale = Math.max(destW / imgW, destH / imgH);
+export function computeCoverFit(imgW: number, imgH: number, destW: number, destH: number, focalX: number, focalY: number, zoomMultiplier: number = 1): CoverFit {
+  const scale = Math.max(destW / imgW, destH / imgH) * zoomMultiplier;
   const drawWidth = imgW * scale;
   const drawHeight = imgH * scale;
   const drawX = -(drawWidth - destW) * (focalX / 100);
@@ -375,7 +384,8 @@ function renderEditorialTemplate(
   // 1. Background image, cover-fit, cropped around the given focal point.
   const focalX = params.focalX ?? 50;
   const focalY = params.focalY ?? 50;
-  const fit = computeCoverFit(img.width, img.height, BANNER_WIDTH, BANNER_HEIGHT, focalX, focalY);
+  const zoom = params.zoom ?? 100;
+  const fit = computeCoverFit(img.width, img.height, BANNER_WIDTH, BANNER_HEIGHT, focalX, focalY, zoom / 100);
   ctx.drawImage(img, fit.drawX, fit.drawY, fit.drawWidth, fit.drawHeight);
 
   // 2. Top and bottom dark gradients so the wordmark/kicker/subtitle and
@@ -753,11 +763,12 @@ function renderNewsTemplate(
   // small box floating near the top.
   const focalX = params.focalX ?? 50;
   const focalY = params.focalY ?? 50;
+  const zoom = params.zoom ?? 100;
   ctx.save();
   ctx.beginPath();
   ctx.rect(imageColumnX, NEWS_CONTENT_TOP, NEWS_COLUMN_WIDTH, NEWS_COLUMN_HEIGHT);
   ctx.clip();
-  const fit = computeCoverFit(img.width, img.height, NEWS_COLUMN_WIDTH, NEWS_COLUMN_HEIGHT, focalX, focalY);
+  const fit = computeCoverFit(img.width, img.height, NEWS_COLUMN_WIDTH, NEWS_COLUMN_HEIGHT, focalX, focalY, zoom / 100);
   ctx.drawImage(img, imageColumnX + fit.drawX, NEWS_CONTENT_TOP + fit.drawY, fit.drawWidth, fit.drawHeight);
   ctx.restore();
   ctx.strokeStyle = NEWS_BLACK;
