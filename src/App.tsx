@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import { Helmet } from 'react-helmet-async';
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
-import FeaturedStrip from './components/FeaturedStrip';
-import EditorialGrid from './components/EditorialGrid';
+import MustReadSection from './components/MustReadSection';
+import LatestStoriesSection from './components/LatestStoriesSection';
 import CategorySection from './components/CategorySection';
 import VideoSection from './components/VideoSection';
 import Newsletter from './components/Newsletter';
@@ -123,13 +123,25 @@ function Home() {
   
   const publishedArticles = useMemo(() => articles.filter(a => a.status === 'published'), [articles]);
 
-  const gridArticles = useMemo(() => 
-    publishedArticles.filter(a => 
-      a.id !== featuredHero?.id && 
+  const gridArticles = useMemo(() =>
+    publishedArticles.filter(a =>
+      a.id !== featuredHero?.id &&
       !featuredStrip.some(f => f.id === a.id)
-    ).slice(0, 9), 
+    ).slice(0, 9),
   [publishedArticles, featuredHero, featuredStrip]);
-  
+
+  // "Must Read" spotlights the top curated article; "Latest Stories" absorbs
+  // the remaining curated picks plus the rest of the recent archive, so the
+  // existing HomepageConfig curation (hero + up to 6 featured picks) still
+  // drives both sections without any schema changes.
+  const mustReadArticle = useMemo(() => featuredStrip[0] || gridArticles[0], [featuredStrip, gridArticles]);
+
+  const latestStoriesArticles = useMemo(() => {
+    const remainingFeatured = featuredStrip.filter(a => a.id !== mustReadArticle?.id);
+    const remainingGrid = gridArticles.filter(a => a.id !== mustReadArticle?.id);
+    return [...remainingFeatured, ...remainingGrid];
+  }, [featuredStrip, gridArticles, mustReadArticle]);
+
   const categorizedArticles = useMemo(() => {
     return categoryNames.map(cat => ({
       name: cat,
@@ -172,8 +184,8 @@ function Home() {
       <Navbar />
       <main>
         {featuredHero && <Hero article={featuredHero} />}
-        <FeaturedStrip articles={featuredStrip} />
-        <EditorialGrid articles={gridArticles} />
+        {mustReadArticle && <MustReadSection article={mustReadArticle} />}
+        <LatestStoriesSection articles={latestStoriesArticles} />
         <VideoSection />
         <div className="space-y-0">
           {categorizedArticles.map((cat) => (
@@ -209,6 +221,8 @@ export default function App() {
   return (
     <SupabaseProvider>
       <ContributorProvider>
+        {/* Respects prefers-reduced-motion for every motion/react animation in the tree */}
+        <MotionConfig reducedMotion="user">
         <GlobalMeta />
         <Router>
           <ScrollToTop />
@@ -255,6 +269,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Router>
+        </MotionConfig>
       </ContributorProvider>
     </SupabaseProvider>
   );

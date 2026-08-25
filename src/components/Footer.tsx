@@ -57,8 +57,8 @@ export default function Footer() {
             </div>
           </div>
 
-          <div className="lg:col-span-1">
-            <span className="text-[10px] uppercase tracking-widest text-reserve-gray block mb-8 font-bold">Registry Index</span>
+          <nav className="lg:col-span-1" aria-label="Footer">
+            <h2 className="text-[10px] uppercase tracking-widest text-reserve-gray block mb-8 font-bold">Registry Index</h2>
             <div className="grid grid-cols-2 gap-x-8 gap-y-4">
               {[
                 'Navigation', 'Digital Archive', 'Editorial Policy',
@@ -97,7 +97,7 @@ export default function Footer() {
                 );
               })}
             </div>
-          </div>
+          </nav>
 
           <div className="lg:col-span-1">
             <span className="text-[10px] uppercase tracking-widest text-reserve-gray block mb-8 font-bold">Contact</span>

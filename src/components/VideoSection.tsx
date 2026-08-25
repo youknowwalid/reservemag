@@ -75,27 +75,27 @@ export default function VideoSection() {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-8 mb-20 border-b border-white/5 pb-10">
           <div>
             <span className="text-[11px] uppercase tracking-[0.4em] text-reserve-accent mb-4 block">Cinematic</span>
-            <h3 className="text-5xl md:text-7xl font-serif">Registry<span className="text-reserve-accent">_</span>Interviews</h3>
+            <h2 className="text-5xl md:text-7xl font-serif">Registry<span className="text-reserve-accent">_</span>Interviews</h2>
           </div>
-          
+
           <div className="flex flex-wrap gap-4 overflow-x-auto pb-4 custom-scrollbar">
-            <button 
+            <button
               onClick={() => setActiveCategory('All')}
-              className={`px-4 py-2 text-[9px] uppercase tracking-widest border transition-all ${
-                activeCategory === 'All' 
-                  ? 'border-white text-white' 
+              className={`px-4 py-2 rounded-full text-[9px] uppercase tracking-widest border transition-all ${
+                activeCategory === 'All'
+                  ? 'border-white text-white'
                   : 'border-white/5 text-zinc-600 hover:border-white/20'
               }`}
             >
               All Registry
             </button>
             {CATEGORIES.map(cat => (
-              <button 
+              <button
                 key={cat}
                 onClick={() => setActiveCategory(cat)}
-                className={`px-4 py-2 text-[9px] uppercase tracking-widest border transition-all whitespace-nowrap ${
-                  activeCategory === cat 
-                    ? 'border-white text-white' 
+                className={`px-4 py-2 rounded-full text-[9px] uppercase tracking-widest border transition-all whitespace-nowrap ${
+                  activeCategory === cat
+                    ? 'border-white text-white'
                     : 'border-white/5 text-zinc-600 hover:border-white/20'
                 }`}
               >
@@ -156,14 +156,14 @@ export default function VideoSection() {
                 
                 {video.featured && (
                   <div className="absolute top-8 left-8 z-20">
-                    <span className="bg-reserve-accent text-black px-4 py-1 text-[9px] font-black uppercase tracking-[0.3em]">
+                    <span className="bg-reserve-accent text-black px-4 py-1 rounded-full text-[9px] font-black uppercase tracking-[0.3em]">
                       Featured Narrative
                     </span>
                   </div>
                 )}
-                
+
                 <div className="absolute bottom-8 right-8 z-20">
-                  <div className="bg-black/80 px-4 py-2 border border-white/10 backdrop-blur-sm">
+                  <div className="bg-black/80 px-4 py-2 rounded-full border border-white/10 backdrop-blur-sm">
                     <span className="text-[10px] tracking-[0.4em] uppercase text-zinc-400">Exclusive Record</span>
                   </div>
                 </div>
@@ -175,9 +175,9 @@ export default function VideoSection() {
                     {video.category}
                   </span>
                 </div>
-                <h4 className="text-4xl md:text-5xl font-serif tracking-tight leading-none group-hover:text-reserve-accent transition-all duration-500">
+                <h3 className="text-4xl md:text-5xl font-serif tracking-tight leading-none group-hover:text-reserve-accent transition-all duration-500">
                   {video.title}
-                </h4>
+                </h3>
                 <div className="h-px w-20 bg-reserve-accent/30 group-hover:w-full transition-all duration-1000" />
               </div>
             </motion.div>
