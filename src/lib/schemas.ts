@@ -21,6 +21,11 @@ export const ARTICLE_DEFAULTS: Article = {
     source: ''
   },
   mobileCropX: 50,
+  mobileCropY: 50,
+  mobileZoom: 100,
+  desktopCropX: 50,
+  desktopCropY: 50,
+  desktopZoom: 100,
   readTime: '5 min',
   date: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
   publishDate: new Date().toISOString()
@@ -72,6 +77,11 @@ export const normalizeArticle = (data: any): Article => {
       ...(data.mobileImage || {})
     },
     mobileCropX: typeof data.mobileCropX === 'number' ? data.mobileCropX : 50,
+    mobileCropY: typeof data.mobileCropY === 'number' ? data.mobileCropY : 50,
+    mobileZoom: typeof data.mobileZoom === 'number' ? data.mobileZoom : 100,
+    desktopCropX: typeof data.desktopCropX === 'number' ? data.desktopCropX : 50,
+    desktopCropY: typeof data.desktopCropY === 'number' ? data.desktopCropY : 50,
+    desktopZoom: typeof data.desktopZoom === 'number' ? data.desktopZoom : 100,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt
   };

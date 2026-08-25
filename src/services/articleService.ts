@@ -21,6 +21,11 @@ function rowToArticle(row: any): Article {
     image: row.image,
     mobileImage: row.mobile_image,
     mobileCropX: row.mobile_crop_x,
+    mobileCropY: row.mobile_crop_y,
+    mobileZoom: row.mobile_zoom,
+    desktopCropX: row.desktop_crop_x,
+    desktopCropY: row.desktop_crop_y,
+    desktopZoom: row.desktop_zoom,
     readTime: row.read_time,
     date: row.date,
     publishDate: row.publish_date,
@@ -45,6 +50,11 @@ function articleToRow(article: Partial<Article>): Record<string, any> {
   if (article.image !== undefined) row.image = article.image;
   if (article.mobileImage !== undefined) row.mobile_image = article.mobileImage;
   if (article.mobileCropX !== undefined) row.mobile_crop_x = article.mobileCropX;
+  if (article.mobileCropY !== undefined) row.mobile_crop_y = article.mobileCropY;
+  if (article.mobileZoom !== undefined) row.mobile_zoom = article.mobileZoom;
+  if (article.desktopCropX !== undefined) row.desktop_crop_x = article.desktopCropX;
+  if (article.desktopCropY !== undefined) row.desktop_crop_y = article.desktopCropY;
+  if (article.desktopZoom !== undefined) row.desktop_zoom = article.desktopZoom;
   if (article.readTime !== undefined) row.read_time = article.readTime;
   if (article.date !== undefined) row.date = article.date;
   if (article.publishDate !== undefined) row.publish_date = article.publishDate;

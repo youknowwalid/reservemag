@@ -365,18 +365,54 @@ export default function StoriesSection() {
                 </div>
               </div>
 
-              {/* Mobile Crop Positioner -- shared FocalPointEditor in horizontal-only mode, preserving the exact prior behavior/DB field (mobileCropX). */}
+              {/* Desktop Hero Crop Positioner -- shared FocalPointEditor, full
+                  X/Y/zoom. Previously this image had NO positioning control
+                  at all (always rendered at a plain centered object-cover
+                  crop); desktopCropX/Y/Zoom are new fields with no prior
+                  data, so every already-published article defaults to
+                  50/50/100 (centered, no zoom) here -- unchanged from how it
+                  always rendered. aspectRatio matches the live site's
+                  desktop crop (21/9 -- see ArticlePage.tsx). */}
+              {editingArticle.image?.url && (
+                <div className="pt-12 border-t border-white/5">
+                  <FocalPointEditor
+                    axis="both"
+                    aspectRatio="21/9"
+                    imageUrl={editingArticle.image.url}
+                    x={editingArticle.desktopCropX ?? 50}
+                    y={editingArticle.desktopCropY ?? 50}
+                    onChange={(x, y) => setEditingArticle({ ...editingArticle, desktopCropX: x, desktopCropY: y })}
+                    zoom={editingArticle.desktopZoom ?? 100}
+                    onZoomChange={(zoom) => setEditingArticle({ ...editingArticle, desktopZoom: zoom })}
+                    title="Desktop Hero Crop Position"
+                    helpText="Define the focal point and zoom for the cinematic desktop banner."
+                  />
+                </div>
+              )}
+
+              {/* Mobile Crop Positioner -- shared FocalPointEditor, now full
+                  X/Y/zoom (was X-only). mobileCropX keeps its exact prior
+                  meaning/DB field; mobileCropY/mobileZoom are new fields
+                  defaulting to 50/100 (unchanged from the old X-only,
+                  vertically-centered, unzoomed behavior) for every
+                  already-published article. No longer described as
+                  affecting the desktop fallback -- desktop now has its own
+                  independent crop above, and ArticlePage.tsx renders the two
+                  breakpoints as separate <img>s so this one only affects the
+                  mobile/portrait image. */}
               {(editingArticle.image?.url || editingArticle.mobileImage?.url) && (
                 <div className="pt-12 border-t border-white/5">
                   <FocalPointEditor
-                    axis="horizontal"
+                    axis="both"
                     aspectRatio="4/5"
                     imageUrl={editingArticle.mobileImage?.url || editingArticle.image?.url || ''}
                     x={editingArticle.mobileCropX ?? 50}
-                    y={50}
-                    onChange={(x) => setEditingArticle({ ...editingArticle, mobileCropX: x })}
+                    y={editingArticle.mobileCropY ?? 50}
+                    onChange={(x, y) => setEditingArticle({ ...editingArticle, mobileCropX: x, mobileCropY: y })}
+                    zoom={editingArticle.mobileZoom ?? 100}
+                    onZoomChange={(zoom) => setEditingArticle({ ...editingArticle, mobileZoom: zoom })}
                     title="Mobile Hero Crop Position"
-                    helpText='Define the focal point for portrait viewports. Applies to both "Mobile Image" and "Desktop Fallback".'
+                    helpText='Define the focal point and zoom for portrait viewports. Applies to "Mobile Image" (or "Desktop Image" when no mobile image is set).'
                   />
                 </div>
               )}

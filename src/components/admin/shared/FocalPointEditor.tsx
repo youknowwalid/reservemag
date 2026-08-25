@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 // Shared focal-point/crop editor, extracted from the article editor's
 // "Mobile Hero Crop Position" tool (StoriesSection.tsx) so the same
@@ -17,6 +17,17 @@ import React, { useState } from 'react';
 // `axis="both"` (the Instagram Banner panel's mode) additionally lets Y
 // move, since the banner's fixed 1080x1350 frame crops arbitrary source
 // photos on both axes, not just horizontally.
+//
+// Zoom (100-200%, optional -- see zoom/onZoomChange below) is a separate
+// control layered on top of the same focal point: it scales the image
+// further while keeping the chosen X/Y anchor fixed in place, via a CSS
+// `transform: scale()` whose `transform-origin` matches the focal point
+// (the same trick works whether the crop is ultimately applied as CSS
+// object-position on the live site, as in the article hero, or replayed
+// as canvas draw math, as in the Instagram banner -- see
+// instagramBannerRenderer.ts's computeCoverFit). Callers that don't pass
+// `zoom`/`onZoomChange` simply don't get a zoom control -- it never
+// forces itself into a caller that hasn't opted in.
 
 export interface FocalPointEditorProps {
   imageUrl: string;
@@ -30,6 +41,23 @@ export interface FocalPointEditorProps {
   aspectRatio?: string;
   title?: string;
   helpText?: string;
+  /** 100-200 (percent, 100 = no zoom). Omit this and `onZoomChange` together to hide the zoom control entirely -- a caller not using zoom just doesn't render one, rather than forcing a default 100% slider nobody asked for. */
+  zoom?: number;
+  onZoomChange?: (zoom: number) => void;
+  /** Upper bound for the zoom slider. Defaults to 200. */
+  maxZoom?: number;
+  /**
+   * Fixed output pixel size this crop is ultimately rendered into
+   * elsewhere (e.g. the Instagram banner's canvas export). Paired with
+   * the source image's own natural size (read off the loaded <img> here)
+   * to show a soft warning when the current zoom would upscale the
+   * source past its native resolution -- purely informational, never
+   * blocks the slider. Omit for callers with no fixed pixel destination
+   * (the article hero images render at whatever CSS box size the
+   * viewport gives them, so there's no fixed target to warn against).
+   */
+  targetWidth?: number;
+  targetHeight?: number;
 }
 
 export default function FocalPointEditor({
@@ -41,8 +69,40 @@ export default function FocalPointEditor({
   aspectRatio = '4/5',
   title = 'Crop Position',
   helpText = 'Define the focal point.',
+  zoom,
+  onZoomChange,
+  maxZoom = 200,
+  targetWidth,
+  targetHeight,
 }: FocalPointEditorProps) {
   const [isDragging, setIsDragging] = useState(false);
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+
+  // A previous image's natural size briefly surviving a URL swap would
+  // make the upscale warning below flicker against the wrong photo for
+  // one frame -- clear it immediately and let the new <img>'s onLoad
+  // repopulate it.
+  useEffect(() => {
+    setNatural(null);
+  }, [imageUrl]);
+
+  const showZoom = onZoomChange !== undefined;
+  const zoomValue = zoom ?? 100;
+
+  const showUpscaleWarning =
+    showZoom &&
+    zoomValue > 100 &&
+    !!targetWidth &&
+    !!targetHeight &&
+    !!natural &&
+    (() => {
+      const baseScale = Math.max(targetWidth / natural.w, targetHeight / natural.h);
+      // Only warn when THIS zoom is what tips it into upscaling -- a
+      // source already smaller than the output at 100% zoom was already
+      // soft before this control existed, and re-flagging that isn't
+      // this feature's job.
+      return baseScale <= 1 && baseScale * (zoomValue / 100) > 1;
+    })();
 
   const handleDrag = (e: React.MouseEvent | React.TouchEvent) => {
     const container = e.currentTarget as HTMLElement;
@@ -71,6 +131,7 @@ export default function FocalPointEditor({
         <div className="flex items-center gap-4">
           <div className="text-[10px] text-zinc-500 uppercase tracking-widest font-mono">
             {axis === 'horizontal' ? `X-Offset: ${x}%` : `X: ${x}% Y: ${y}%`}
+            {showZoom ? ` Zoom: ${zoomValue}%` : ''}
           </div>
           <button
             onClick={() => onChange(50, 50)}
@@ -109,7 +170,12 @@ export default function FocalPointEditor({
             <img
               src={imageUrl}
               className="w-full h-full object-cover pointer-events-none select-none"
-              style={{ objectPosition: `${x}% ${displayY}%` }}
+              style={{
+                objectPosition: `${x}% ${displayY}%`,
+                transform: `scale(${zoomValue / 100})`,
+                transformOrigin: `${x}% ${displayY}%`,
+              }}
+              onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
               alt="Crop Preview"
               referrerPolicy="no-referrer"
             />
@@ -173,6 +239,38 @@ export default function FocalPointEditor({
               </div>
             )}
 
+            {showZoom && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+                  <span>Zoom</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-zinc-400 font-mono normal-case">{zoomValue}%</span>
+                    <button
+                      type="button"
+                      onClick={() => onZoomChange!(100)}
+                      className="text-reserve-accent hover:text-white transition-colors normal-case"
+                    >
+                      Reset Zoom
+                    </button>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min={100}
+                  max={maxZoom}
+                  step="1"
+                  value={zoomValue}
+                  onChange={(e) => onZoomChange!(parseInt(e.target.value, 10))}
+                  className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-reserve-accent"
+                />
+                {showUpscaleWarning && (
+                  <p className="text-[9px] uppercase tracking-widest text-amber-500 leading-relaxed">
+                    ⚠ This zoom level may upscale the source photo beyond its native resolution -- expect softness in the exported banner.
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="space-y-3">
               <h4 className="text-[10px] uppercase tracking-widest text-zinc-300 font-bold">Positioning Guidelines</h4>
               <ul className="space-y-2">
@@ -184,6 +282,12 @@ export default function FocalPointEditor({
                   <span className="text-reserve-accent">→</span>
                   Use the Rule of Thirds guides to help frame the focal point.
                 </li>
+                {showZoom && (
+                  <li className="flex gap-3 text-[10px] text-zinc-500 leading-relaxed uppercase">
+                    <span className="text-reserve-accent">→</span>
+                    Zoom in after positioning to crop out unwanted edges without changing the focal point.
+                  </li>
+                )}
               </ul>
             </div>
           </div>

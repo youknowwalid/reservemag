@@ -127,6 +127,27 @@ function testCoverFitNoCropWhenAspectMatches() {
   assert(fit.drawWidth === 400 && fit.drawHeight === 200, 'scales down exactly to the box size', fit);
 }
 
+function testCoverFitZoomMultiplier() {
+  console.log('\n=== computeCoverFit: zoomMultiplier scales the draw size further around the same focal point ===');
+  // Same square-into-landscape setup as testCoverFitCenteredSquareIntoLandscape
+  // (1000x1000 into 400x200, base scale 0.4 -> 400x400), now with a 150%
+  // zoom (multiplier 1.5) on top: scale becomes 0.6 -> 600x600.
+  const unzoomed = computeCoverFit(1000, 1000, 400, 200, 50, 50);
+  const zoomed = computeCoverFit(1000, 1000, 400, 200, 50, 50, 1.5);
+  assert(zoomed.drawWidth === 600 && zoomed.drawHeight === 600, 'draw size scales by the zoom multiplier on top of the base cover-fit scale', zoomed);
+  assert(zoomed.drawWidth > unzoomed.drawWidth, 'zoomed draw size is strictly larger than the unzoomed one', { unzoomed, zoomed });
+  // Centered focal point (50/50) must still center the crop -- zooming
+  // must never shift the anchor, only how much of the image is visible
+  // around it.
+  assert(zoomed.drawX === -(600 - 400) / 2, 'still centered horizontally after zooming', zoomed);
+  assert(zoomed.drawY === -(600 - 200) / 2, 'still centered vertically after zooming', zoomed);
+
+  console.log('\n=== computeCoverFit: omitting zoomMultiplier is identical to passing 1 (100%) ===');
+  const defaulted = computeCoverFit(1000, 1000, 400, 200, 30, 70);
+  const explicit1 = computeCoverFit(1000, 1000, 400, 200, 30, 70, 1);
+  assert(JSON.stringify(defaulted) === JSON.stringify(explicit1), 'default zoomMultiplier (1) produces byte-identical output to an explicit 1 -- the pre-zoom call sites never see a behavior change', { defaulted, explicit1 });
+}
+
 // ---------------------------------------------------------------------------
 // computeNewsColumnPositions / full-height column geometry
 // ---------------------------------------------------------------------------
@@ -169,6 +190,7 @@ async function main() {
   testCoverFitCenteredSquareIntoLandscape();
   testCoverFitFocalPointExtremes();
   testCoverFitNoCropWhenAspectMatches();
+  testCoverFitZoomMultiplier();
   testColumnPositionsDefaultTextLeft();
   testColumnPositionsFlipped();
   testColumnGeometrySane();

@@ -183,6 +183,23 @@ export interface Article {
     source?: string;
   };
   mobileCropX?: number;
+  /** 0-100. Together with mobileCropX, the full 2D focal point for the mobile/portrait hero crop -- see FocalPointEditor. Defaults to 50 (center) when unset, matching mobileCropX's pre-existing default. */
+  mobileCropY?: number;
+  /** 100-200 (percent, 100 = no zoom). Same units as FocalPointEditor's zoom slider. */
+  mobileZoom?: number;
+  /**
+   * 0-100 each. The desktop/cinematic hero image's own focal point --
+   * previously nonexistent (the desktop hero had no positioning control
+   * at all and rendered at a plain centered crop). Independent of
+   * mobileCropX/Y: ArticlePage.tsx renders desktop and mobile hero
+   * images as two separate <img>s specifically so each breakpoint's
+   * position can differ, rather than the old single-<img> "one crop
+   * value drives both breakpoints" behavior mobileCropX had.
+   */
+  desktopCropX?: number;
+  desktopCropY?: number;
+  /** 100-200 (percent, 100 = no zoom). Same units as FocalPointEditor's zoom slider. */
+  desktopZoom?: number;
   createdAt?: any;
   updatedAt?: any;
   readTime?: string;
