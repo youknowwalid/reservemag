@@ -90,6 +90,19 @@ export function getConfiguredEditorialModel(): string {
 export interface EditorialGenerationDeps {
   generate: typeof aiGenerateDefault;
   retrieveSources: typeof retrieveSourcesDefault;
+  /**
+   * Optional per-phase observability hook (see
+   * EditorialGenerationProgressEvent) -- called as each phase starts/ends,
+   * not just once at the very end. Best-effort from this function's
+   * perspective: awaited (so AI_REQUEST_COMPLETED is recorded before this
+   * function returns), but any failure inside the callback itself is the
+   * caller's responsibility to swallow -- this function does not wrap the
+   * call in its own try/catch, so a throwing `onProgress` would abort the
+   * generation. Omitted in every existing test, which is intentional: no
+   * test needs to assert on progress checkpoints, only on the final
+   * result.
+   */
+  onProgress?: (event: import('./editorialTypes').EditorialGenerationProgressEvent) => void | Promise<void>;
 }
 
 function summarize(id: string | null, source: RetrievedSource): RetrievedSourceSummary {
@@ -176,6 +189,7 @@ export async function generateEditorialPackage(
 ): Promise<EditorialGenerationResult> {
   const generate = deps.generate ?? aiGenerateDefault;
   const doRetrieveSources = deps.retrieveSources ?? retrieveSourcesDefault;
+  const onProgress = deps.onProgress ?? (() => {});
 
   const generatedAt = new Date().toISOString();
   const requestedModel = getConfiguredEditorialModel();
@@ -208,7 +222,9 @@ export async function generateEditorialPackage(
   }
 
   // 1. Source retrieval -- delegates entirely to the existing engine (or the injected fake in tests). No AI call happens here or as a result of it failing.
+  await onProgress({ phase: 'SOURCE_RETRIEVAL_STARTED', at: new Date().toISOString() });
   const job = await doRetrieveSources(sourceUrls);
+  await onProgress({ phase: 'SOURCE_RETRIEVAL_COMPLETED', at: new Date().toISOString() });
   if (job.status === 'SOURCE_RETRIEVAL_FAILED') {
     return {
       ...baseResult,
@@ -243,6 +259,7 @@ export async function generateEditorialPackage(
   let servedModel: string | null = null;
   let usage: EditorialGenerationResult['usage'] = { promptTokens: null, completionTokens: null, totalTokens: null };
 
+  await onProgress({ phase: 'AI_REQUEST_STARTED', at: new Date().toISOString() });
   try {
     // No `responseFormat` -- standard OpenAI-compatible fields only
     // (model/messages/max_tokens/temperature). See this file's header
@@ -259,9 +276,16 @@ export async function generateEditorialPackage(
     rawText = result.text;
     servedModel = result.model || null;
     usage = result.usage;
+    await onProgress({ phase: 'AI_REQUEST_COMPLETED', at: new Date().toISOString(), providerHttpStatus: 200, providerErrorCode: null });
   } catch (error) {
     latencyMs = Date.now() - generationStart;
     const { category, message } = classifyGenerationError(error);
+    await onProgress({
+      phase: 'AI_REQUEST_COMPLETED',
+      at: new Date().toISOString(),
+      providerHttpStatus: error instanceof AIProviderError ? error.status ?? null : null,
+      providerErrorCode: error instanceof AIProviderError ? error.code : null,
+    });
     // A CONFIGURATION_ERROR is thrown locally (missing/invalid credentials)
     // before any network call is made -- no real Tabitoken request was
     // ever attempted, so this must not be recorded as one. Every other

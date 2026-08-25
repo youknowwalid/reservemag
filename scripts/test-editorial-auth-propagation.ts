@@ -73,23 +73,36 @@ function createFakeEditorialTable() {
       };
     },
     update(patch: Record<string, any>) {
+      // Filters accumulate as `.eq()` calls chain; the whole chain is
+      // "thenable" so a bare `await update(patch).eq('id', val)` (as
+      // markTerminal/updateProgress do) still works exactly like before,
+      // while `.eq(...).eq(...).select('id').single()` (as the new
+      // conditional markRunning does) is also supported, matching what
+      // the real Supabase client accepts for both call shapes.
+      const filters: Record<string, string> = {};
+      const applyAndRespond = async () => {
+        for (const [fingerprint, row] of active) {
+          if (filters.id !== undefined && row.id !== filters.id) continue;
+          if (filters.generation_status !== undefined && row.status !== filters.generation_status) continue;
+          updateLog.push({ id: row.id, patch });
+          if (patch.generation_status === 'RUNNING') row.status = 'RUNNING';
+          else if (patch.generation_status) active.delete(fingerprint); // any other status is terminal -> frees the slot
+          return { data: { id: row.id }, error: null };
+        }
+        return { data: null, error: { code: 'PGRST116', message: 'no rows matched the given filters' } };
+      };
       const chain: any = {
-        eq: async (col: string, val: string) => {
-          if (col === 'id') {
-            updateLog.push({ id: val, patch });
-            for (const [fingerprint, row] of active) {
-              if (row.id !== val) continue;
-              if (patch.generation_status === 'RUNNING') row.status = 'RUNNING';
-              else if (patch.generation_status) active.delete(fingerprint); // any other status is terminal -> frees the slot
-            }
-          }
-          return { error: null };
+        eq(col: string, val: string) {
+          filters[col] = val;
+          return chain;
         },
         in: () => chain,
         lt: async () => {
           updateLog.push({ patch });
           return { error: null };
         },
+        select: () => ({ single: applyAndRespond }),
+        then: (resolve: any, reject: any) => applyAndRespond().then((r) => resolve({ error: r.error }), reject),
       };
       return chain;
     },

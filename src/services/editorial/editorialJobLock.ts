@@ -57,16 +57,38 @@ export interface EditorialJobLockStore {
    * call may be made unless this returns `ok: true`.
    */
   tryAcquire(fingerprint: string, row: Record<string, unknown>): Promise<AcquireResult>;
-  /** Transitions an acquired lock from PENDING to RUNNING (about to make the AI request). */
-  markRunning(id: string): Promise<void>;
+  /**
+   * Transitions an acquired lock from PENDING to RUNNING (about to make
+   * the AI request). Returns `{ claimed: false }` (instead of throwing)
+   * if the row was not PENDING when this was called -- e.g. it was
+   * already claimed by another invocation, or already reached a terminal
+   * state. Callers MUST check `claimed` before making the AI request:
+   * this is the guard that makes it safe for the background worker route
+   * to be invoked more than once for the same job id (it never will be,
+   * by construction -- see server.ts's trigger path -- but this makes
+   * that guarantee load-bearing at the data layer, not just "this code
+   * happens not to call it twice").
+   */
+  markRunning(id: string): Promise<{ claimed: boolean }>;
   /** Transitions an acquired lock to a terminal status, releasing the fingerprint for future requests. */
   markTerminal(id: string, patch: Record<string, unknown>): Promise<void>;
+  /**
+   * Best-effort, non-terminal partial update for observability checkpoints
+   * (see EditorialGenerationProgressEvent) -- e.g. recording
+   * `ai_request_started_at` the moment the Tabitoken call begins, well
+   * before the generation reaches any terminal state. Must never throw in
+   * a way that aborts the generation itself; callers treat failures here
+   * as non-fatal and log-only.
+   */
+  updateProgress(id: string, patch: Record<string, unknown>): Promise<void>;
   /**
    * Best-effort cleanup: force-fails any PENDING/RUNNING row for
    * `fingerprint` older than `staleBeforeIso` so a crashed process
    * doesn't permanently block retrying the same generation. Called
    * before `tryAcquire` so a genuinely abandoned lock doesn't shadow a
-   * legitimate new attempt.
+   * legitimate new attempt, and also called opportunistically by the
+   * status-polling route so a stuck job is reclaimed as soon as an admin
+   * checks on it, not only on the next generation attempt.
    */
   reclaimStale(fingerprint: string, staleBeforeIso: string): Promise<void>;
 }
@@ -99,12 +121,22 @@ export function createInMemoryJobLockStore(): EditorialJobLockStore {
     },
     async markRunning(id) {
       for (const entry of entries.values()) {
-        if (entry.id === id) entry.status = 'RUNNING';
+        if (entry.id === id) {
+          if (entry.status !== 'PENDING') return { claimed: false };
+          entry.status = 'RUNNING';
+          return { claimed: true };
+        }
       }
+      return { claimed: false };
     },
     async markTerminal(id) {
       for (const entry of entries.values()) {
         if (entry.id === id) entry.status = 'TERMINAL';
+      }
+    },
+    async updateProgress(id, patch) {
+      for (const entry of entries.values()) {
+        if (entry.id === id) Object.assign(entry.row, patch);
       }
     },
     async reclaimStale(fingerprint, staleBeforeIso) {
@@ -145,10 +177,32 @@ export function createSupabaseEditorialJobLockStore(client: SupabaseClient): Edi
       return { ok: true, id: (data as { id: string }).id };
     },
     async markRunning(id) {
-      const { error } = await client.from('editorial_generations').update({ generation_status: 'RUNNING' }).eq('id', id);
-      if (error) throw error;
+      // Conditional on the row still being PENDING -- an ordinary UPDATE
+      // by id alone would happily "succeed" even if the row had already
+      // moved to RUNNING or a terminal status, which is exactly the
+      // ambiguity this method's contract (see the interface doc comment)
+      // exists to remove. `.select().single()` after the UPDATE reports
+      // PostgREST's "no rows matched" as an error (PGRST116) rather than
+      // silently returning no data, which is what lets this distinguish
+      // "I just claimed it" from "someone/something already did".
+      const { data, error } = await client
+        .from('editorial_generations')
+        .update({ generation_status: 'RUNNING' })
+        .eq('id', id)
+        .eq('generation_status', 'PENDING')
+        .select('id')
+        .single();
+      if (error) {
+        if ((error as { code?: string }).code === 'PGRST116') return { claimed: false };
+        throw error;
+      }
+      return { claimed: Boolean(data) };
     },
     async markTerminal(id, patch) {
+      const { error } = await client.from('editorial_generations').update(patch).eq('id', id);
+      if (error) throw error;
+    },
+    async updateProgress(id, patch) {
       const { error } = await client.from('editorial_generations').update(patch).eq('id', id);
       if (error) throw error;
     },
