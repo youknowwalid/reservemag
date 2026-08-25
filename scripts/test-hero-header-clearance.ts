@@ -60,12 +60,16 @@ function main() {
 
   console.log('\n=== Hero reserves header clearance instead of a hardcoded offset ===');
   assert(
-    heroSrc.includes('min-h-[90vh]') && heroSrc.includes('md:min-h-screen'),
+    heroSrc.includes('min-h-[90dvh]') && heroSrc.includes('md:min-h-[100dvh]'),
     'the hero section uses min-height (can grow to fit content) rather than a fixed height (would force overlap when content needs more room)',
   );
   assert(
     !heroSrc.includes('"relative h-[90vh]'),
     'the old fixed-height className ("relative h-[90vh] md:h-screen ...") is gone, not left alongside the new one',
+  );
+  assert(
+    !/min-h-\[90vh\]|md:min-h-screen/.test(heroSrc),
+    'plain vh/vh-based min-height utilities are gone -- Android Chrome/iOS Safari resolve `vh` against the "large" (address-bar-retracted) viewport regardless of the bar\'s real state, which dvh does not',
   );
   assert(
     heroSrc.includes('pt-[var(--header-height'),
@@ -76,6 +80,26 @@ function main() {
   for (const cls of ['short:text-3xl', 'short:md:text-4xl', 'short:lg:text-5xl']) {
     assert(heroSrc.includes(cls), `headline includes ${cls}`);
   }
+
+  console.log('\n=== Hero headline has a tighter floor on narrow phones (~360-412 CSS px), not just the old default ===');
+  assert(
+    heroSrc.includes('text-4xl sm:text-5xl md:text-8xl lg:text-9xl'),
+    'headline steps text-4xl -> sm:text-5xl -> md:text-8xl -> lg:text-9xl, so phones below the 640px sm breakpoint render smaller than the old flat text-5xl floor instead of just wrapping to more lines',
+  );
+
+  console.log('\n=== Navbar mobile menu overlay: dvh-bounded, scrollable, and safe-area aware (same clipping class of bug as the Hero fix, applied to the overlay panel) ===');
+  assert(
+    /fixed inset-0 h-\[100dvh\]/.test(navbarSrc),
+    'the full-screen overlay is explicitly height-bound to the dynamic viewport (100dvh), not left to inset-0 alone -- position:fixed\'s containing block otherwise sizes to the "large" viewport and the panel silently extends behind Android Chrome\'s (or iOS Safari\'s) address bar chrome',
+  );
+  assert(
+    /overflow-y-auto/.test(navbarSrc) && /min-h-0/.test(navbarSrc),
+    'the overlay\'s content column can scroll (overflow-y-auto, with min-h-0 so the flex child can actually shrink to enable it) so the bottom row is always reachable rather than unreachable behind the fold',
+  );
+  assert(
+    /pb-8 pb-safe/.test(navbarSrc),
+    'the overlay\'s last row (social links + Become a Contributor) uses the same pb-safe safe-area pattern as the Hero CTA, so it clears the device safe-area inset the same way',
+  );
 
   console.log('\n=== The "short" variant is defined and only fires below tablet/landscape-laptop height ===');
   const indexCss = fs.readFileSync(path.resolve('src/index.css'), 'utf-8');
