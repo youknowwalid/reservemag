@@ -153,7 +153,7 @@ export default function Navbar() {
             {showBecomeContributorCta ? (
               <Link
                 to="/contribute"
-                className="hidden sm:flex items-center gap-2 px-3 sm:px-4 md:px-6 py-2 border border-reserve-border rounded-full text-[9px] sm:text-[10px] md:text-[11px] uppercase tracking-widest whitespace-nowrap hover:bg-reserve-text hover:text-reserve-bg transition-all duration-300 flex-shrink-0"
+                className="hidden sm:inline-flex btn-pill btn-outline !text-[9px] md:!text-[11px] !px-3 md:!px-6"
               >
                 Become a Contributor
               </Link>
@@ -164,7 +164,7 @@ export default function Navbar() {
             )}
             <Link
               to={siteSettings?.ctaButton.url || '/get-featured'}
-              className="flex items-center gap-2 px-3 sm:px-4 md:px-6 py-2 border border-reserve-border rounded-full text-[9px] sm:text-[10px] md:text-[11px] uppercase tracking-widest whitespace-nowrap hover:bg-reserve-text hover:text-reserve-bg transition-all duration-300 flex-shrink-0"
+              className="inline-flex btn-pill btn-gold !text-[9px] md:!text-[11px] !px-3 md:!px-6"
             >
               {siteSettings?.ctaButton.text || 'Get Featured'}
             </Link>

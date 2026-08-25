@@ -35,23 +35,25 @@ export default function Newsletter() {
       <div className="container mx-auto px-6 relative z-10">
         <div className="max-w-3xl mx-auto text-center">
           <span className="text-[11px] uppercase tracking-[0.5em] text-reserve-accent mb-8 block">Exclusive Insight</span>
-          <h3 className="text-5xl md:text-7xl font-serif mb-12">Subscribe to The Ledger</h3>
+          <h2 className="text-5xl md:text-7xl font-serif mb-12">Subscribe to The Ledger</h2>
           <p className="text-reserve-gray text-lg mb-16 font-light leading-relaxed">
             The week’s most essential narratives, delivered with cinematic clarity. Join our inner circle of international thinkers and leaders.
           </p>
 
           <form onSubmit={handleSubmit} className="flex flex-col md:flex-row gap-6 items-center">
-            <input 
-              type="email" 
+            <label htmlFor="newsletter-email" className="sr-only">Email address</label>
+            <input
+              id="newsletter-email"
+              type="email"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="YOUR EMAIL ADDRESS" 
+              placeholder="YOUR EMAIL ADDRESS"
               className="flex-1 w-full bg-transparent border-b border-reserve-border py-4 text-center md:text-left text-xl focus:outline-none focus:border-reserve-accent transition-colors placeholder:text-zinc-800"
             />
-            <button 
+            <button
               disabled={status === 'loading'}
-              className="w-full md:w-auto px-12 py-4 bg-reserve-text text-reserve-bg text-[10px] uppercase tracking-[0.3em] font-bold hover:bg-reserve-accent transition-all disabled:opacity-50"
+              className="inline-flex btn-pill btn-gold w-full md:w-auto !px-12 !py-4 disabled:opacity-50"
             >
               {status === 'loading' ? 'BEING PROCESSED...' : 'Join'}
             </button>

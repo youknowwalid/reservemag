@@ -15,15 +15,22 @@
   --font-serif: "Playfair Display", serif;
 
   --color-reserve-bg: #050505;
+  --color-reserve-surface: #0E0E0D;
   --color-reserve-text: #F4F4F0;
   --color-reserve-gray: #A1A1A1;
   --color-reserve-accent: #D4AF37;
+  --color-reserve-accent-soft: rgba(212, 175, 55, 0.12);
   --color-reserve-border: rgba(255, 255, 255, 0.08);
 
   /* Architectural Spacing Scale */
   --spacing-container: 2rem;
   --spacing-section: 6rem;
-  
+
+  /* Radius scale for the card/pill system */
+  --radius-card: 1rem;
+  --radius-card-lg: 1.5rem;
+  --radius-pill: 999px;
+
   /* Breakpoints */
   --breakpoint-sm: 640px;
   --breakpoint-md: 768px;
@@ -101,4 +108,95 @@
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* ---------------------------------------------------------------- */
+/* Button / Pill System                                             */
+/* Gold used deliberately as an accent on primary actions only.     */
+/* No `display` set here on purpose -- callers compose it with       */
+/* Tailwind's own display utilities (inline-flex, hidden,           */
+/* sm:inline-flex, ...) in the JSX so responsive visibility keeps   */
+/* working. A `display` set here would be unlayered CSS and beat    */
+/* Tailwind's layered utilities regardless of breakpoint.           */
+/* ---------------------------------------------------------------- */
+.btn-pill {
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: var(--radius-pill);
+  padding: 0.75rem 1.75rem;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  white-space: nowrap;
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, transform 0.3s ease;
+}
+
+.btn-gold {
+  background-color: var(--color-reserve-accent);
+  color: #14110a;
+  border: 1px solid var(--color-reserve-accent);
+}
+.btn-gold:hover {
+  background-color: #e5c458;
+  border-color: #e5c458;
+}
+
+.btn-outline {
+  background-color: transparent;
+  color: var(--color-reserve-text);
+  border: 1px solid var(--color-reserve-border);
+}
+.btn-outline:hover {
+  border-color: var(--color-reserve-accent);
+  color: var(--color-reserve-accent);
+}
+
+.btn-pill:focus-visible {
+  outline: 2px solid var(--color-reserve-accent);
+  outline-offset: 3px;
+}
+
+/* Eyebrow / category pill */
+.pill-label {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-reserve-accent);
+  color: var(--color-reserve-accent);
+  padding: 0.35rem 0.9rem;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+
+/* Section heading rule: label + flexed hairline */
+.section-rule {
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--color-reserve-border);
+}
+
+/* Safe-area aware bottom padding, used by the mobile hero so its CTA
+   never sits behind a device's home indicator / notch cutout. */
+.pb-safe {
+  padding-bottom: max(2rem, env(safe-area-inset-bottom));
+}
+
+/* ---------------------------------------------------------------- */
+/* Reduced Motion                                                   */
+/* ---------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .cinematic-bg:hover img {
+    transform: none;
+  }
 }

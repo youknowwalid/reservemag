@@ -21,12 +21,16 @@ const CategorySection: React.FC<CategorySectionProps> = ({ category, articles })
     <section id={category.toLowerCase()} className="py-24 border-t border-reserve-border">
       <div className="container mx-auto px-6">
         <div className="flex justify-between items-end mb-16">
-          <h2 className="text-6xl md:text-8xl font-bold tracking-tighter opacity-10 absolute -translate-y-12 select-none uppercase">
+          {/* Decorative watermark, not a heading -- was previously an <h2>,
+              which put a second "category name" heading on the page right
+              next to the real one below and gave screen readers a heading
+              with no useful content (it's select-none/aria-hidden either way). */}
+          <div aria-hidden="true" className="text-6xl md:text-8xl font-bold tracking-tighter opacity-10 absolute -translate-y-12 select-none uppercase">
             {category}
-          </h2>
+          </div>
           <div className="relative z-10">
             <span className="text-[11px] uppercase tracking-[0.4em] text-reserve-accent mb-2 block">Archive</span>
-            <h3 className="text-4xl font-serif">{category}</h3>
+            <h2 className="text-4xl font-serif">{category}</h2>
           </div>
           {/* audit NAV-01: this was a plain <button> with no href/handler -- inert on every category section. */}
           <Link
@@ -42,20 +46,20 @@ const CategorySection: React.FC<CategorySectionProps> = ({ category, articles })
           {mainArticle && (
             <Link to={`/${mainSlug}`} className="lg:col-span-8 group cursor-pointer">
               <div>
-                <ResponsiveImage 
+                <ResponsiveImage
                   article={mainArticle}
                   aspectRatio="aspect-[4/5] md:aspect-[16/9] mb-8"
-                  containerClassName="shadow-lg"
+                  containerClassName="shadow-lg rounded-[var(--radius-card)]"
                 />
                 <div className="relative">
                   <div className="absolute -top-16 left-6 z-20">
-                    <span className="bg-black/50 backdrop-blur-md px-4 py-1 text-[10px] uppercase tracking-widest border border-white/10">Lead Story</span>
+                    <span className="bg-black/50 backdrop-blur-md px-4 py-1 rounded-full text-[10px] uppercase tracking-widest border border-white/10">Lead Story</span>
                   </div>
                 </div>
                 <div>
-                  <h4 className="text-4xl md:text-5xl font-serif mb-6 group-hover:text-reserve-accent transition-colors">
+                  <h3 className="text-4xl md:text-5xl font-serif mb-6 group-hover:text-reserve-accent transition-colors">
                     {mainArticle.title}
-                  </h4>
+                  </h3>
                   <p className="text-reserve-gray text-lg mb-8 max-w-2xl font-light leading-relaxed">
                     {mainArticle.excerpt}
                   </p>
@@ -81,9 +85,9 @@ const CategorySection: React.FC<CategorySectionProps> = ({ category, articles })
                     className="group cursor-pointer border-b border-reserve-border pb-8 last:border-0"
                   >
                     <span className="text-[10px] uppercase tracking-[0.2em] text-reserve-accent mb-4 block">0{idx + 1}</span>
-                    <h5 className="text-xl font-serif mb-4 group-hover:text-reserve-accent transition-colors">
+                    <h4 className="text-xl font-serif mb-4 group-hover:text-reserve-accent transition-colors">
                       {article.title}
-                    </h5>
+                    </h4>
                     <div className="flex items-center gap-4 text-[9px] uppercase tracking-widest text-reserve-gray">
                       <span>{article.author || 'The Reserve Editorial'}</span>
                       <span>{article.readTime}</span>
