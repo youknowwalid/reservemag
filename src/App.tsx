@@ -149,18 +149,18 @@ function Home() {
     }));
   }, [publishedArticles, categoryNames]);
 
-  if (dbLoading && articles.length === 0) {
-    return (
-      <div className="h-screen w-full flex items-center justify-center bg-black">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-reserve-accent border-t-transparent rounded-full animate-spin" />
-          <p className="text-xs uppercase tracking-[0.4em] text-zinc-600">Initializing Archive</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (articles.length === 0) {
+  // No blocking "Initializing Archive" gate: the shell (Navbar/Hero/
+  // sections/Footer below) renders immediately on first paint, and each
+  // section already degrades gracefully while articles is still empty
+  // (featuredHero/mustReadArticle are undefined until the fetch resolves,
+  // so their &&-guarded sections simply don't render yet; LatestStoriesSection
+  // returns null for an empty list; CategorySection renders its heading
+  // chrome with no lead/list articles rather than crashing). Only once
+  // the fetch has actually finished (dbLoading is false) AND still
+  // resolved to zero articles do we show the real empty state below --
+  // otherwise this would flash "The Archive is Quiet" on every load
+  // before the fetch even completes.
+  if (!dbLoading && articles.length === 0) {
     return (
       <div className="h-screen w-full flex items-center justify-center bg-reserve-bg p-6">
         <div className="text-center space-y-8 max-w-lg">
@@ -181,7 +181,7 @@ function Home() {
 
   return (
     <div className="bg-reserve-bg text-reserve-text overflow-x-hidden selection:bg-reserve-accent selection:text-reserve-bg">
-      <Navbar />
+      <Navbar variant="hero" />
       <main>
         {featuredHero && <Hero article={featuredHero} />}
         {mustReadArticle && <MustReadSection article={mustReadArticle} />}
