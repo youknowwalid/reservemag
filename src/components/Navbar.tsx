@@ -188,11 +188,30 @@ export default function Navbar() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -100 }}
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed inset-0 z-[60] bg-reserve-bg bg-opacity-95 backdrop-blur-xl flex"
+            // h-[100dvh] (not left to inset-0 alone): position:fixed's
+            // containing block sizes to the "large" viewport on Android
+            // Chrome (and iOS Safari) -- i.e. as if the collapsible
+            // address bar were always retracted -- rather than the area
+            // actually visible when it's showing. Left as inset-0 alone,
+            // this panel silently extended taller than the visible
+            // screen and its last row (social links + Become a
+            // Contributor, below) rendered underneath the real, still
+            // on-screen address/nav bar chrome. dvh tracks the bar's
+            // real state instead.
+            className="fixed inset-0 h-[100dvh] z-[60] bg-reserve-bg bg-opacity-95 backdrop-blur-xl flex"
           >
-            <div className="w-full lg:w-1/3 h-full border-r border-reserve-border p-12 flex flex-col justify-between">
+            {/* min-h-0 lets this flex child actually shrink below its
+                content's height so overflow-y-auto below can kick in --
+                without it a flex item defaults to min-height:auto and
+                just overflows its h-full parent uncontained. Needed so
+                the bottom row (social links + Become a Contributor) is
+                always reachable by scrolling even when the category list
+                above it is long enough, or the viewport short enough,
+                that everything doesn't fit at once -- rather than that
+                row silently clipping off the bottom of the screen. */}
+            <div className="w-full lg:w-1/3 h-full min-h-0 overflow-y-auto border-r border-reserve-border p-12 flex flex-col justify-between">
               <div>
-                <button 
+                <button
                   onClick={() => setIsMenuOpen(false)}
                   className="mb-16 text-reserve-gray hover:text-reserve-text transition-colors flex items-center gap-2"
                 >
@@ -218,7 +237,13 @@ export default function Navbar() {
                 </div>
               </div>
 
-              <div className="pb-8">
+              {/* pb-safe (same pattern as the Hero CTA): guarantees this
+                  last row -- the one that was reported clipped behind
+                  Chrome's own bottom bar -- clears both the safe-area
+                  inset (home indicator / gesture bar) and, now that the
+                  panel is properly dvh-bounded above, the visible browser
+                  chrome itself. */}
+              <div className="pb-8 pb-safe">
                 <p className="text-[11px] text-reserve-gray uppercase tracking-widest mb-4">The Reserve Magazine</p>
                 <div className="flex gap-4">
                   <a href={siteSettings?.socialUrls?.instagram || '#'} target="_blank" rel="noreferrer" className="text-xs hover:text-reserve-accent transition-colors">Instagram</a>

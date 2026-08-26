@@ -19,10 +19,22 @@ export default function Hero({ article }: HeroProps) {
               the pre-redesign Hero (audit RESP-01/RESP-02, guarded by
               scripts/test-hero-header-clearance.ts): it can grow to fit
               content instead of forcing an overlap/clip when content needs
-              more room than 90vh/100vh gives it. The content block's own
+              more room than 90dvh/100dvh gives it. The content block's own
               pt-[var(--header-height)] below is what actually guarantees
-              nav clearance, at any height this box ends up. */}
-          <div className="relative min-h-[90vh] md:min-h-screen w-full overflow-hidden rounded-[var(--radius-card-lg)] bg-reserve-surface cursor-pointer flex flex-col justify-end">
+              nav clearance, at any height this box ends up.
+
+              dvh, not vh: on Android Chrome (and iOS Safari) the address
+              bar collapses/expands as the user scrolls, and plain `vh`
+              units are pinned to the "large" viewport (as if the bar were
+              always retracted) rather than tracking the bar's real state.
+              That makes a `vh`-sized box taller than what's actually
+              visible whenever the bar is showing -- fine on this
+              grow-to-fit min-height (it just means more of the box is
+              off-screen below the fold, not clipped), but `dvh` still
+              tracks the real visible viewport as the bar animates, which
+              is what a real-device test against a devtools-only viewport
+              size can't catch. */}
+          <div className="relative min-h-[90dvh] md:min-h-[100dvh] w-full overflow-hidden rounded-[var(--radius-card-lg)] bg-reserve-surface cursor-pointer flex flex-col justify-end">
             <motion.div
               initial={{ scale: 1.1, opacity: 0 }}
               animate={{ scale: 1, opacity: 0.7 }}
@@ -62,8 +74,18 @@ export default function Hero({ article }: HeroProps) {
 
                 {/* The homepage's one <h1> (audit A11Y-01) -- unchanged from
                     the pre-redesign Hero, including its short: type scale
-                    for landscape phones. */}
-                <h1 className="text-5xl md:text-8xl lg:text-9xl short:text-3xl short:md:text-4xl short:lg:text-5xl font-bold leading-[0.9] tracking-tighter mb-8 short:mb-3 text-reserve-text text-balance">
+                    for landscape phones.
+
+                    text-4xl below sm (< 640px, e.g. 360-412 CSS px real
+                    phones) instead of jumping straight to the old
+                    text-5xl floor: at text-5xl a full headline was
+                    running to 4 lines and dominating the viewport on
+                    narrow phones even though it technically fit -- this
+                    lowers the actual rendered size there rather than
+                    just accepting more wrapped lines. sm:text-5xl keeps
+                    the previous size for larger phones/small tablets;
+                    md/lg are unchanged. */}
+                <h1 className="text-4xl sm:text-5xl md:text-8xl lg:text-9xl short:text-3xl short:md:text-4xl short:lg:text-5xl font-bold leading-[0.9] tracking-tighter mb-8 short:mb-3 text-reserve-text text-balance">
                   {article.title}
                 </h1>
 
