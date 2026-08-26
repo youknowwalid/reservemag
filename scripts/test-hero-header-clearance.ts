@@ -88,17 +88,25 @@ function main() {
   );
 
   console.log('\n=== Navbar mobile menu overlay: dvh-bounded, scrollable, and safe-area aware (same clipping class of bug as the Hero fix, applied to the overlay panel) ===');
+  // The overlay was redesigned from a full-screen two-column takeover
+  // (fixed height, decorative photo panel) to a compact list that sizes
+  // to its own content -- so the height/scroll invariant is now a CEILING
+  // (max-h, not a forced h-) applied directly to the one scroll
+  // container, not a min-h-0 flex-child workaround for a two-column
+  // split that no longer exists. The protection itself (never extends
+  // behind collapsible browser chrome, always scrollable if content
+  // exceeds the real viewport) is unchanged.
   assert(
-    /fixed inset-0 h-\[100dvh\]/.test(navbarSrc),
-    'the full-screen overlay is explicitly height-bound to the dynamic viewport (100dvh), not left to inset-0 alone -- position:fixed\'s containing block otherwise sizes to the "large" viewport and the panel silently extends behind Android Chrome\'s (or iOS Safari\'s) address bar chrome',
+    /fixed inset-0 max-h-\[100dvh\]/.test(navbarSrc),
+    'the overlay is capped to the dynamic viewport (100dvh) as a max-height ceiling, not left to inset-0 alone -- position:fixed\'s containing block otherwise sizes to the "large" viewport and the panel could silently extend behind Android Chrome\'s (or iOS Safari\'s) address bar chrome',
   );
   assert(
-    /overflow-y-auto/.test(navbarSrc) && /min-h-0/.test(navbarSrc),
-    'the overlay\'s content column can scroll (overflow-y-auto, with min-h-0 so the flex child can actually shrink to enable it) so the bottom row is always reachable rather than unreachable behind the fold',
+    /max-h-\[100dvh\][^"]*overflow-y-auto/.test(navbarSrc),
+    'that same dvh-capped element can scroll internally (overflow-y-auto) so the footer row is always reachable even if the category list is long enough, or the viewport short enough, that everything doesn\'t fit at once',
   );
   assert(
-    /pb-8 pb-safe/.test(navbarSrc),
-    'the overlay\'s last row (social links + Become a Contributor) uses the same pb-safe safe-area pattern as the Hero CTA, so it clears the device safe-area inset the same way',
+    /env\(safe-area-inset-bottom\)/.test(navbarSrc),
+    'the overlay\'s last row (social links + Become a Contributor) adds the real device safe-area inset to its bottom padding, so it clears the home indicator / gesture bar the same way the Hero CTA\'s pb-safe does',
   );
 
   console.log('\n=== The "short" variant is defined and only fires below tablet/landscape-laptop height ===');

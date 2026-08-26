@@ -15,7 +15,17 @@ import ContributorAccountMenu from './contribute/ContributorAccountMenu';
 // nothing in it.
 const FALLBACK_CATEGORIES = ['Fashion', 'Business', 'Sports', 'Cinema', 'Culture', 'Luxury'];
 
-export default function Navbar() {
+interface NavbarProps {
+  /** 'hero': the homepage's own compact-glass unscrolled treatment (see
+   * .glass-nav-hero in index.css) -- lets the hero image read through the
+   * nav before the visitor scrolls. Scrolling still hands off to the same
+   * .glass-nav every other route uses, unchanged. Every other route stays
+   * on 'default' (today's transparent-unscrolled -> .glass-nav-on-scroll
+   * behavior), untouched. */
+  variant?: 'default' | 'hero';
+}
+
+export default function Navbar({ variant = 'default' }: NavbarProps) {
   const { siteSettings } = useSupabase();
   // `contributor` (not just a Supabase Auth session existing) is the
   // real "is this visitor already a contributor?" signal -- same one
@@ -27,6 +37,11 @@ export default function Navbar() {
   const showBecomeContributorCta = shouldShowBecomeContributorCta(Boolean(contributor));
   const navigate = useNavigate();
   const [isScrolled, setIsScrolled] = useState(false);
+  // Only actually compact while variant="hero" is unscrolled -- the
+  // instant the visitor scrolls, isScrolled flips this to false and the
+  // nav falls straight through to the same .glass-nav every other route
+  // (and the homepage itself, post-scroll) already uses.
+  const isHeroCompact = variant === 'hero' && !isScrolled;
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [menuItems, setMenuItems] = useState<string[]>(FALLBACK_CATEGORIES);
@@ -102,7 +117,7 @@ export default function Navbar() {
       <nav
         ref={navRef}
         className={`fixed top-0 left-0 w-full z-50 transition-all duration-500 ${
-          isScrolled ? 'glass-nav py-4' : 'bg-transparent py-8'
+          isScrolled ? 'glass-nav py-4' : isHeroCompact ? 'glass-nav-hero py-2.5' : 'bg-transparent py-8'
         }`}
       >
         <div className="container mx-auto px-4 sm:px-6 flex items-center justify-between relative">
@@ -143,13 +158,19 @@ export default function Navbar() {
                 centering only turns on once the viewport is confirmed
                 wide enough to fit it (1024px+, already verified clean). */}
             <Link to="/" className="lg:absolute lg:left-1/2 lg:-translate-x-1/2 flex-shrink min-w-0">
-              <span className="text-lg sm:text-2xl lg:text-3xl xl:text-4xl font-bold tracking-tighter text-reserve-text uppercase flex-shrink min-w-0 truncate block font-serif">
+              <span
+                className={
+                  isHeroCompact
+                    ? 'text-[14px] font-medium tracking-[0.3px] text-[#f4f1ea] uppercase flex-shrink min-w-0 truncate block font-serif'
+                    : 'text-lg sm:text-2xl lg:text-3xl xl:text-4xl font-bold tracking-tighter text-reserve-text uppercase flex-shrink min-w-0 truncate block font-serif'
+                }
+              >
                 {siteSettings?.title || 'THE RESERVE'}<span className="text-reserve-accent">.</span>
               </span>
             </Link>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3 md:gap-6 flex-shrink-0 ml-4">
+          <div className={`flex items-center flex-shrink-0 ml-4 ${isHeroCompact ? 'gap-2.5' : 'gap-2 sm:gap-3 md:gap-6'}`}>
             {showBecomeContributorCta ? (
               <Link
                 to="/contribute"
@@ -164,16 +185,24 @@ export default function Navbar() {
             )}
             <Link
               to={siteSettings?.ctaButton.url || '/get-featured'}
-              className="inline-flex btn-pill btn-gold !text-[9px] md:!text-[11px] !px-3 md:!px-6"
+              className={
+                isHeroCompact
+                  ? 'inline-flex btn-pill btn-gold !text-[9.5px] !font-medium !py-1.5 !px-3 !rounded-[20px] !text-[#3d2e05]'
+                  : 'inline-flex btn-pill btn-gold !text-[9px] md:!text-[11px] !px-3 md:!px-6'
+              }
             >
               {siteSettings?.ctaButton.text || 'Get Featured'}
             </Link>
             <button
               onClick={() => setIsMenuOpen(true)}
               aria-label="Open menu"
-              className="md:hidden -mr-2.5 flex items-center justify-center w-11 h-11 text-reserve-text hover:text-reserve-accent transition-colors"
+              className={
+                isHeroCompact
+                  ? 'md:hidden -mr-2.5 flex items-center justify-center w-11 h-11 hover:text-reserve-accent transition-colors'
+                  : 'md:hidden -mr-2.5 flex items-center justify-center w-11 h-11 text-reserve-text hover:text-reserve-accent transition-colors'
+              }
             >
-              <Menu size={18} className="sm:w-5 sm:h-5" />
+              <Menu size={isHeroCompact ? 17 : 18} className={isHeroCompact ? undefined : 'sm:w-5 sm:h-5'} color={isHeroCompact ? '#f4f1ea' : undefined} />
             </button>
           </div>
         </div>
@@ -184,81 +213,76 @@ export default function Navbar() {
       <AnimatePresence>
         {isMenuOpen && (
           <motion.div
-            initial={{ opacity: 0, x: -100 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -100 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            // h-[100dvh] (not left to inset-0 alone): position:fixed's
-            // containing block sizes to the "large" viewport on Android
-            // Chrome (and iOS Safari) -- i.e. as if the collapsible
-            // address bar were always retracted -- rather than the area
-            // actually visible when it's showing. Left as inset-0 alone,
-            // this panel silently extended taller than the visible
-            // screen and its last row (social links + Become a
-            // Contributor, below) rendered underneath the real, still
-            // on-screen address/nav bar chrome. dvh tracks the bar's
-            // real state instead.
-            className="fixed inset-0 h-[100dvh] z-[60] bg-reserve-bg bg-opacity-95 backdrop-blur-xl flex"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            // max-h-[100dvh] + overflow-y-auto (not h-[100dvh] + flex, the
+            // old full-screen-takeover layout): the compact redesign sizes
+            // to its own content -- typically far shorter than the
+            // viewport -- rather than always filling it. dvh, not a plain
+            // height, still caps it so on a short/landscape viewport with
+            // a long category list it scrolls within itself instead of
+            // extending behind Android Chrome/iOS Safari's collapsible
+            // chrome (the same real bug class as the Hero fix -- see
+            // scripts/test-hero-header-clearance.ts). Single scroll
+            // container this time, not a flex child needing min-h-0: the
+            // old two-column (list + decorative photo panel) layout is
+            // gone along with the split it required.
+            className="fixed inset-0 max-h-[100dvh] z-[60] bg-reserve-bg bg-opacity-95 backdrop-blur-xl overflow-y-auto"
           >
-            {/* min-h-0 lets this flex child actually shrink below its
-                content's height so overflow-y-auto below can kick in --
-                without it a flex item defaults to min-height:auto and
-                just overflows its h-full parent uncontained. Needed so
-                the bottom row (social links + Become a Contributor) is
-                always reachable by scrolling even when the category list
-                above it is long enough, or the viewport short enough,
-                that everything doesn't fit at once -- rather than that
-                row silently clipping off the bottom of the screen. */}
-            <div className="w-full lg:w-1/3 h-full min-h-0 overflow-y-auto border-r border-reserve-border p-12 flex flex-col justify-between">
-              <div>
-                <button
-                  onClick={() => setIsMenuOpen(false)}
-                  className="mb-16 text-reserve-gray hover:text-reserve-text transition-colors flex items-center gap-2"
-                >
-                  <X size={24} />
-                  <span className="text-[11px] uppercase tracking-widest">Close</span>
-                </button>
+            <div className="w-full max-w-md mx-auto flex flex-col">
+              <button
+                onClick={() => setIsMenuOpen(false)}
+                className="h-10 px-5 flex items-center gap-2 text-[#9a988f] hover:text-reserve-text transition-colors flex-shrink-0"
+              >
+                <X size={15} />
+                <span className="text-[10px] uppercase tracking-[1.5px]">Close</span>
+              </button>
 
-                <div className="space-y-6">
-                  {menuItems.map((item, i) => (
-                    <motion.a
-                      key={item}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.05 }}
-                      href={`#${item.toLowerCase()}`}
-                      className="group flex items-center justify-between text-3xl md:text-5xl font-serif text-reserve-text hover:text-reserve-accent transition-all pl-2 hover:pl-4"
-                      onClick={() => setIsMenuOpen(false)}
-                    >
-                      {item}
-                      <ChevronRight className="opacity-0 group-hover:opacity-100 transition-opacity" size={32} />
-                    </motion.a>
-                  ))}
-                </div>
+              <div className="px-[22px]">
+                {menuItems.map((item, i) => (
+                  <motion.a
+                    key={item}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.03 }}
+                    href={`#${item.toLowerCase()}`}
+                    className={`group h-[38px] box-border flex items-center justify-between text-[16px] text-[#f4f1ea] hover:text-reserve-accent transition-colors ${
+                      i < menuItems.length - 1 ? 'border-b border-[rgba(244,241,234,0.08)]' : ''
+                    }`}
+                    onClick={() => setIsMenuOpen(false)}
+                  >
+                    {item}
+                    <ChevronRight className="opacity-0 group-hover:opacity-100 transition-opacity" size={16} />
+                  </motion.a>
+                ))}
               </div>
 
-              {/* pb-safe (same pattern as the Hero CTA): guarantees this
-                  last row -- the one that was reported clipped behind
-                  Chrome's own bottom bar -- clears both the safe-area
-                  inset (home indicator / gesture bar) and, now that the
-                  panel is properly dvh-bounded above, the visible browser
-                  chrome itself. */}
-              <div className="pb-8 pb-safe">
-                <p className="text-[11px] text-reserve-gray uppercase tracking-widest mb-4">The Reserve Magazine</p>
-                <div className="flex gap-4">
-                  <a href={siteSettings?.socialUrls?.instagram || '#'} target="_blank" rel="noreferrer" className="text-xs hover:text-reserve-accent transition-colors">Instagram</a>
-                  <a href={siteSettings?.socialUrls?.facebook || '#'} target="_blank" rel="noreferrer" className="text-xs hover:text-reserve-accent transition-colors">Facebook</a>
-                  <Link to="/archive" className="text-xs hover:text-reserve-accent transition-colors">Archive</Link>
+              {/* Safe-area handling deliberately isn't the shared .pb-safe
+                  class here -- that forces a 2rem (32px) floor, which
+                  would blow past this footer's specified 16px bottom
+                  padding on non-notched devices. This adds only the real
+                  inset on top of the exact 16px the design calls for. */}
+              <div
+                className="border-t border-[rgba(244,241,234,0.15)] px-[22px] pt-3 mt-2"
+                style={{ paddingBottom: 'calc(16px + env(safe-area-inset-bottom))' }}
+              >
+                <p className="text-[9px] uppercase tracking-[1.5px] text-[#8a877c] mb-3">The Reserve Magazine</p>
+                <div className="flex flex-wrap gap-[14px] text-[11px] text-[#b8b5ab]">
+                  <a href={siteSettings?.socialUrls?.instagram || '#'} target="_blank" rel="noreferrer" className="hover:text-reserve-accent transition-colors">Instagram</a>
+                  <a href={siteSettings?.socialUrls?.facebook || '#'} target="_blank" rel="noreferrer" className="hover:text-reserve-accent transition-colors">Facebook</a>
+                  <Link to="/archive" className="hover:text-reserve-accent transition-colors">Archive</Link>
                   {showBecomeContributorCta ? (
                     // Reachable here on small screens, where the navbar's own "Become a Contributor" pill is hidden (sm:flex) for space.
-                    <Link to="/contribute" className="text-xs hover:text-reserve-accent transition-colors" onClick={() => setIsMenuOpen(false)}>Become a Contributor</Link>
+                    <Link to="/contribute" className="hover:text-reserve-accent transition-colors" onClick={() => setIsMenuOpen(false)}>Become a Contributor</Link>
                   ) : (
                     <>
                       {/* Mirrors the header's ContributorAccountMenu, whose own trigger is hidden below the sm breakpoint -- same reachability reasoning as "Become a Contributor" above for a logged-out visitor. */}
-                      <Link to="/contribute/dashboard" className="text-xs hover:text-reserve-accent transition-colors" onClick={() => setIsMenuOpen(false)}>Dashboard</Link>
+                      <Link to="/contribute/dashboard" className="hover:text-reserve-accent transition-colors" onClick={() => setIsMenuOpen(false)}>Dashboard</Link>
                       <button
                         onClick={async () => { setIsMenuOpen(false); await logout(); await reloadSession(); navigate('/'); }}
-                        className="text-xs hover:text-reserve-accent transition-colors"
+                        className="hover:text-reserve-accent transition-colors"
                       >
                         Sign Out
                       </button>
@@ -267,8 +291,6 @@ export default function Navbar() {
                 </div>
               </div>
             </div>
-            
-            <div className="hidden lg:block flex-1 bg-[url('https://images.unsplash.com/photo-1490481651871-ab68de25d43d?q=80&w=2070&auto=format&fit=crop')] bg-cover bg-center opacity-40 grayscale hover:grayscale-0 transition-all duration-1000" />
           </motion.div>
         )}
       </AnimatePresence>

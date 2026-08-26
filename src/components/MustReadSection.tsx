@@ -32,16 +32,24 @@ export default function MustReadSection({ article }: MustReadSectionProps) {
             viewport={{ once: true, amount: 0 }}
             transition={{ duration: 0.7, ease: [0.2, 0, 0.2, 1] }}
           >
-            <span className="text-[11px] font-bold uppercase tracking-[0.3em] text-reserve-accent mb-4 block">
+            {/* Category badge, headline color/line-height, and subtitle
+                match Hero.tsx's Phase 3 refresh exactly (same outline-pill
+                token, same #f7f4ec/1.18 headline treatment, same
+                #d8d5cb/13.5px/1.55 subtitle) so the two sections read as
+                one visual system when scrolled past, per the "unify
+                without merging" call -- layout/height/CTA-variant (outline
+                vs Hero's solid gold, this section's own secondary role)
+                stay as they were. */}
+            <span className="inline-flex items-center uppercase rounded-[20px] border border-[#D4AF37] text-[#D4AF37] text-[10.5px] tracking-[1px] px-[14px] py-[6px] mb-4">
               {article.category}
             </span>
-            <h3 className="font-serif text-3xl md:text-5xl leading-tight mb-6 text-balance">
+            <h3 className="font-serif text-3xl md:text-5xl leading-[1.18] mb-6 text-balance text-[#f7f4ec]">
               {article.title}
             </h3>
-            <p className="text-reserve-gray text-base md:text-lg font-light leading-relaxed mb-10 max-w-xl">
+            <p className="text-[13.5px] leading-[1.55] text-[#d8d5cb] font-light mb-10 max-w-xl">
               {article.excerpt}
             </p>
-            <Link to={`/${slug}`} className="inline-flex btn-pill btn-outline">
+            <Link to={`/${slug}`} className="inline-flex btn-pill btn-outline !text-[12.5px] !font-medium !py-[11px] !px-[22px] !rounded-[24px]">
               Read Story
             </Link>
           </motion.div>

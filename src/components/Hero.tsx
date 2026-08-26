@@ -49,8 +49,18 @@ export default function Hero({ article }: HeroProps) {
                 hoverScale={false}
               />
               {/* Steepens toward the bottom so the anchored text stays legible
-                  over any photo, on every viewport. */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-black/5" />
+                  over any photo, on every viewport. Values per the Phase 3
+                  visual refresh -- a plain inline gradient rather than
+                  Tailwind's gradient utilities, since the spec's four
+                  explicit stops don't map onto Tailwind's default color-stop
+                  positions. */}
+              <div
+                className="absolute inset-0"
+                style={{
+                  background:
+                    'linear-gradient(180deg, rgba(12,11,10,0.1) 0%, rgba(12,11,10,0) 22%, rgba(12,11,10,0.55) 58%, rgba(12,11,10,0.97) 100%)',
+                }}
+              />
               {article.image?.credit && (
                 <div className="absolute bottom-6 right-6 z-20 pointer-events-none hidden md:block">
                   <span className="text-[9px] uppercase tracking-[0.2em] text-reserve-gray/50 font-mono">
@@ -60,7 +70,7 @@ export default function Hero({ article }: HeroProps) {
               )}
             </motion.div>
 
-            <div className="relative z-10 px-6 md:px-12 pt-[var(--header-height,6rem)] pb-8 md:pb-14 pb-safe short:pb-6">
+            <div className="relative z-10 px-[22px] md:px-12 pt-[var(--header-height,6rem)] pb-8 md:pb-14 pb-safe short:pb-6">
               <motion.div
                 initial={{ y: 50, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
@@ -68,8 +78,10 @@ export default function Hero({ article }: HeroProps) {
                 className="max-w-4xl"
               >
                 <div className="flex flex-wrap items-center gap-3 mb-6 short:mb-3">
-                  <span className="pill-label">Exclusive {article.category}</span>
-                  <span className="text-[11px] text-reserve-gray uppercase tracking-widest">{article.date}</span>
+                  <span className="inline-flex items-center uppercase rounded-[20px] border border-[#D4AF37] text-[#D4AF37] text-[10.5px] tracking-[1px] px-[14px] py-[6px]">
+                    Exclusive {article.category}
+                  </span>
+                  <span className="text-[11.5px] text-[#9a988f] uppercase tracking-[1px]">{article.date}</span>
                 </div>
 
                 {/* The homepage's one <h1> (audit A11Y-01) -- unchanged from
@@ -85,27 +97,37 @@ export default function Hero({ article }: HeroProps) {
                     just accepting more wrapped lines. sm:text-5xl keeps
                     the previous size for larger phones/small tablets;
                     md/lg are unchanged. */}
-                <h1 className="text-4xl sm:text-5xl md:text-8xl lg:text-9xl short:text-3xl short:md:text-4xl short:lg:text-5xl font-bold leading-[0.9] tracking-tighter mb-8 short:mb-3 text-reserve-text text-balance">
+                {/* font-size/breakpoint classes stay exactly as before --
+                    scripts/test-hero-header-clearance.ts asserts this
+                    literal string, and the responsive/short: scale is the
+                    tested RESP-01/RESP-02 fix (a flat 29px per the Phase 3
+                    mockup would collide with the header at short viewports
+                    and undo that fix). Weight/line-height/color/shadow are
+                    the Phase 3 refresh, layered on top. */}
+                <h1
+                  className="text-4xl sm:text-5xl md:text-8xl lg:text-9xl short:text-3xl short:md:text-4xl short:lg:text-5xl font-medium leading-[1.18] tracking-tighter mb-8 short:mb-3 text-[#f7f4ec] text-balance"
+                  style={{ textShadow: '0 2px 12px rgba(0,0,0,0.4)' }}
+                >
                   {article.title}
                 </h1>
 
-                <p className="text-lg md:text-xl text-reserve-gray max-w-xl font-light leading-relaxed line-clamp-2 md:line-clamp-none mb-6 md:mb-8 short:hidden">
+                <p className="text-[13.5px] leading-[1.55] text-[#d8d5cb] max-w-xl font-light line-clamp-2 md:line-clamp-none mb-6 md:mb-8 short:hidden">
                   {article.excerpt}
                 </p>
 
                 <div className="flex flex-wrap items-center justify-between gap-6">
-                  <div className="flex items-center gap-6 divide-x divide-reserve-border">
+                  <div className="flex items-center gap-6 divide-x divide-[rgba(244,241,234,0.2)]">
                     <div>
-                      <span className="block text-[10px] uppercase text-reserve-gray tracking-widest mb-1">Author</span>
-                      <span className="text-sm font-medium">{article.author || 'The Reserve Editorial'}</span>
+                      <span className="block text-[9.5px] uppercase text-[#a8a59a] tracking-[0.5px] mb-1">Author</span>
+                      <span className="text-[12.5px] text-[#f0ede4] font-medium">{article.author || 'The Reserve Editorial'}</span>
                     </div>
                     <div className="pl-6">
-                      <span className="block text-[10px] uppercase text-reserve-gray tracking-widest mb-1">Read Time</span>
-                      <span className="text-sm font-medium">{article.readTime}</span>
+                      <span className="block text-[9.5px] uppercase text-[#a8a59a] tracking-[0.5px] mb-1">Read Time</span>
+                      <span className="text-[12.5px] text-[#f0ede4] font-medium">{article.readTime}</span>
                     </div>
                   </div>
 
-                  <span className="inline-flex btn-pill btn-gold">
+                  <span className="inline-flex btn-pill btn-gold !text-[12.5px] !font-medium !py-[11px] !px-[22px] !rounded-[24px] !text-[#3d2e05]">
                     Read Full Story →
                   </span>
                 </div>
